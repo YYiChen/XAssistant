@@ -23,14 +23,17 @@ public class KeyDatabaseService : IKeyDatabaseService
     {
         using var connection = new SqliteConnection(ConnectionString);
         connection.Open();
-        var cmd = connection.CreateCommand();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText =
             @"
+            PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS KeyPressRecords (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 Key TEXT NOT NULL,
                 PressTime TEXT NOT NULL
-            );";
+            );
+            CREATE INDEX IF NOT EXISTS idx_keypress_presstime ON KeyPressRecords(PressTime);
+            ";
         cmd.ExecuteNonQuery();
     }
 
@@ -38,11 +41,43 @@ public class KeyDatabaseService : IKeyDatabaseService
     {
         using var connection = new SqliteConnection(ConnectionString);
         connection.Open();
-        var cmd = connection.CreateCommand();
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = "INSERT INTO KeyPressRecords (Key, PressTime) VALUES (@k, @t)";
         cmd.Parameters.AddWithValue("@k", record.Key);
         cmd.Parameters.AddWithValue("@t", record.PressTime.ToString("o"));
         cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 批量写入：一次连接、一次事务、参数复用。
+    /// 表结构与单条写入完全一致，历史数据零迁移。
+    /// </summary>
+    public void SaveKeyPressBatch(IReadOnlyList<KeyPressRecord> records)
+    {
+        if (records.Count == 0)
+            return;
+
+        using var connection = new SqliteConnection(ConnectionString);
+        connection.Open();
+        using var transaction = connection.BeginTransaction();
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = "INSERT INTO KeyPressRecords (Key, PressTime) VALUES (@k, @t)";
+
+        var keyParam = cmd.Parameters.Add("@k", Microsoft.Data.Sqlite.SqliteType.Text);
+        var timeParam = cmd.Parameters.Add("@t", Microsoft.Data.Sqlite.SqliteType.Text);
+
+        // 先预编译语句，避免每条记录重新解析 SQL
+        cmd.Prepare();
+
+        foreach (var r in records)
+        {
+            keyParam.Value = r.Key;
+            timeParam.Value = r.PressTime.ToString("o");
+            cmd.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
     }
 
     public Dictionary<string, int> GetKeyCounts()

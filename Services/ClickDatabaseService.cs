@@ -23,14 +23,16 @@ public class ClickDatabaseService : IClickDatabaseService
     {
         using var connection = new SqliteConnection(ConnectionString);
         connection.Open();
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.CommandText =
             @"
+            PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS ClickRecords (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 Button TEXT NOT NULL,
                 ClickTime TEXT NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS idx_clickrecords_clicktime ON ClickRecords(ClickTime);
         ";
         command.ExecuteNonQuery();
     }
@@ -39,11 +41,40 @@ public class ClickDatabaseService : IClickDatabaseService
     {
         using var connection = new SqliteConnection(ConnectionString);
         connection.Open();
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.CommandText = "INSERT INTO ClickRecords (Button, ClickTime) VALUES (@b, @t)";
         command.Parameters.AddWithValue("@b", record.Button);
         command.Parameters.AddWithValue("@t", record.ClickTime.ToString("o")); // ISO 8601
         command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 批量写入：一次连接、一次事务、语句预编译。表结构不变。
+    /// </summary>
+    public void SaveClickBatch(IReadOnlyList<MouseClickRecord> records)
+    {
+        if (records.Count == 0)
+            return;
+
+        using var connection = new SqliteConnection(ConnectionString);
+        connection.Open();
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "INSERT INTO ClickRecords (Button, ClickTime) VALUES (@b, @t)";
+
+        var buttonParam = command.Parameters.Add("@b", Microsoft.Data.Sqlite.SqliteType.Text);
+        var timeParam = command.Parameters.Add("@t", Microsoft.Data.Sqlite.SqliteType.Text);
+        command.Prepare();
+
+        foreach (var r in records)
+        {
+            buttonParam.Value = r.Button;
+            timeParam.Value = r.ClickTime.ToString("o");
+            command.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
     }
 
     public Dictionary<string, int> GetClickCountsByDate(DateTime date)

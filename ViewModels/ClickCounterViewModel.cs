@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using XAssistant.Models;
 using XAssistant.Services.Interfaces;
+using WpfApplication = System.Windows.Application;
 
 namespace XAssistant.ViewModels;
 
@@ -11,6 +12,7 @@ public partial class ClickCounterViewModel : ViewModelBase
     private readonly IMouseClickHookService _hookService;
     private readonly IClickDatabaseService _dbService;
     private readonly IConfigurationService _configService;
+    private readonly IMouseClickBuffer _buffer;
 
     [ObservableProperty]
     private int _leftClickCount;
@@ -62,12 +64,14 @@ public partial class ClickCounterViewModel : ViewModelBase
     public ClickCounterViewModel(
         IMouseClickHookService hookService,
         IClickDatabaseService dbService,
-        IConfigurationService configService
+        IConfigurationService configService,
+        IMouseClickBuffer buffer
     )
     {
         _hookService = hookService;
         _dbService = dbService;
         _configService = configService;
+        _buffer = buffer;
 
         // 加载历史总计
         var counts = _dbService.GetClickCounts();
@@ -117,50 +121,120 @@ public partial class ClickCounterViewModel : ViewModelBase
 
     private DateTime _lastRefreshDate = DateTime.Today;
 
+    // UI 更新节流：高频点击时不必每次都切到 UI 线程派发，
+    // 合并为最多每 50ms 一次，避免 Dispatcher 队列积压导致界面卡顿。
+    private static readonly TimeSpan UiThrottleInterval = TimeSpan.FromMilliseconds(50);
+    private readonly object _uiGate = new();
+    private int _pendingLeft;
+    private int _pendingMiddle;
+    private int _pendingRight;
+    private bool _uiFlushScheduled;
+    private DateTime _lastUiFlush = DateTime.MinValue;
+
     private void OnMouseClicked(string button)
     {
         if (!IsRecording)
             return;
 
-        switch (button)
-        {
-            case "Left":
-                LeftClickCount++;
-                break;
-            case "Middle":
-                MiddleClickCount++;
-                break;
-            case "Right":
-                RightClickCount++;
-                break;
-        }
-
-        _dbService.SaveClick(new MouseClickRecord { Button = button, ClickTime = DateTime.Now });
+        // 热路径：只做入队，不碰数据库、不切 UI 线程
+        _buffer.Enqueue(new MouseClickRecord { Button = button, ClickTime = DateTime.Now });
 
         if (DateTime.Today != _lastRefreshDate)
         {
             RefreshDailyCounts();
             _lastRefreshDate = DateTime.Today;
+            return;
         }
-        else
+
+        // 累计到待刷新计数，按节流合并派发
+        lock (_uiGate)
         {
             switch (button)
             {
                 case "Left":
-                    LeftClickToday++;
+                    _pendingLeft++;
                     break;
                 case "Middle":
-                    MiddleClickToday++;
+                    _pendingMiddle++;
                     break;
                 case "Right":
-                    RightClickToday++;
+                    _pendingRight++;
                     break;
             }
+
+            var now = DateTime.UtcNow;
+            if (_uiFlushScheduled || (now - _lastUiFlush) < UiThrottleInterval)
+                return;
+
+            _uiFlushScheduled = true;
+            _lastUiFlush = now;
         }
 
-        // 通知聚合属性更新
-        OnPropertyChanged(nameof(MouseTodayClicks));
-        OnPropertyChanged(nameof(MouseTotalClicks));
+        ScheduleUiFlush();
+    }
+
+    private void ScheduleUiFlush()
+    {
+        var delay = UiThrottleInterval - (DateTime.UtcNow - _lastUiFlush);
+        if (delay < TimeSpan.Zero)
+            delay = TimeSpan.Zero;
+
+        var timer = new System.Windows.Threading.DispatcherTimer(
+            System.Windows.Threading.DispatcherPriority.Background,
+            WpfApplication.Current.Dispatcher
+        )
+        {
+            Interval = delay,
+        };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            FlushUiCounters();
+        };
+        timer.Start();
+    }
+
+    private void FlushUiCounters()
+    {
+        int left;
+        int middle;
+        int right;
+        lock (_uiGate)
+        {
+            left = _pendingLeft;
+            middle = _pendingMiddle;
+            right = _pendingRight;
+            _pendingLeft = 0;
+            _pendingMiddle = 0;
+            _pendingRight = 0;
+            _uiFlushScheduled = false;
+            _lastUiFlush = DateTime.UtcNow;
+        }
+
+        if (left == 0 && middle == 0 && right == 0)
+            return;
+
+        WpfApplication.Current.Dispatcher.Invoke(() =>
+        {
+            LeftClickCount += left;
+            MiddleClickCount += middle;
+            RightClickCount += right;
+            LeftClickToday += left;
+            MiddleClickToday += middle;
+            RightClickToday += right;
+
+            OnPropertyChanged(nameof(MouseTodayClicks));
+            OnPropertyChanged(nameof(MouseTotalClicks));
+        });
+
+        // 节流窗口内可能又攒了新计数，继续排一次
+        lock (_uiGate)
+        {
+            if (_pendingLeft == 0 && _pendingMiddle == 0 && _pendingRight == 0)
+                return;
+            _uiFlushScheduled = true;
+        }
+        ScheduleUiFlush();
     }
 
     [RelayCommand]

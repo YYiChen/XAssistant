@@ -14,7 +14,6 @@ public sealed class ProcessUsageTracker : IDisposable
     private readonly string _dbPath;
     private const string DbFile = "app_usage.db";
     private const double MinimumSessionSeconds = 1.0;
-    private const double PendingProcessTimeoutSeconds = 3.0;
     private bool _isStopped;
 
     private readonly ConcurrentDictionary<string, AppSessionState> _appSessions = new(
@@ -26,7 +25,6 @@ public sealed class ProcessUsageTracker : IDisposable
     private ManagementEventWatcher? _startWatcher;
     private ManagementEventWatcher? _stopWatcher;
     private Timer? _titleRefreshTimer;
-    private CancellationTokenSource? _cts;
 
     private static readonly string SelfProcessName = NormalizeProcessName(
         Process.GetCurrentProcess().ProcessName
@@ -40,13 +38,12 @@ public sealed class ProcessUsageTracker : IDisposable
 
     public void Start()
     {
-        _cts = new CancellationTokenSource();
         InitializeDatabase();
         RecoverUnfinishedSessions(); // 恢复未完成的会话
         CaptureExistingProcesses();
         StartWatchers();
 
-        // 每5秒刷新一次（同时更新窗口标题、检查待确认进程、累计时长）
+        // 每 5 秒检查待确认进程并累计各会话时长
         _titleRefreshTimer = new Timer(
             _ => RefreshAndAccumulate(),
             null,
@@ -92,7 +89,7 @@ public sealed class ProcessUsageTracker : IDisposable
             if (total < MinimumSessionSeconds)
                 DeleteSession(state.SessionId);
             else
-                CloseSession(state.SessionId, now, total, state.LastWindowTitle);
+                CloseSession(state.SessionId, now, total);
         }
     }
 
@@ -101,7 +98,6 @@ public sealed class ProcessUsageTracker : IDisposable
         _titleRefreshTimer?.Dispose();
         _startWatcher?.Dispose();
         _stopWatcher?.Dispose();
-        _cts?.Dispose();
         GC.SuppressFinalize(this);
     }
 
@@ -288,7 +284,7 @@ public sealed class ProcessUsageTracker : IDisposable
                             if (finalAcc < MinimumSessionSeconds)
                                 DeleteSession(item.id);
                             else
-                                CloseSession(item.id, endOfOldDay, finalAcc, null);
+                                CloseSession(item.id, endOfOldDay, finalAcc);
 
                             // 为今天创建新会话
                             var todayStart = DateTime.Today;
@@ -300,7 +296,6 @@ public sealed class ProcessUsageTracker : IDisposable
                                 StartTime = todayStart,
                                 AccumulatedSeconds = (DateTime.Now - todayStart).TotalSeconds,
                                 LastUpdateTime = DateTime.Now,
-                                LastWindowTitle = GetBestWindowTitle(matchingProcs),
                             };
                             _appSessions[item.name] = newState;
                             foreach (var proc in matchingProcs)
@@ -313,7 +308,7 @@ public sealed class ProcessUsageTracker : IDisposable
                             if (totalSec < MinimumSessionSeconds)
                                 DeleteSession(item.id);
                             else
-                                CloseSession(item.id, expectedEndTime, totalSec, null);
+                                CloseSession(item.id, expectedEndTime, totalSec);
                             // 不创建新会话，让 CaptureExistingProcesses 稍后为这些进程创建正确起始时间的会话
                         }
                     }
@@ -323,7 +318,7 @@ public sealed class ProcessUsageTracker : IDisposable
                         if (totalSec < MinimumSessionSeconds)
                             DeleteSession(item.id);
                         else
-                            CloseSession(item.id, expectedEndTime, totalSec, null);
+                            CloseSession(item.id, expectedEndTime, totalSec);
                     }
                     continue;
                 }
@@ -339,7 +334,6 @@ public sealed class ProcessUsageTracker : IDisposable
                         StartTime = startTime,
                         AccumulatedSeconds = totalSec,
                         LastUpdateTime = lastUpdate,
-                        LastWindowTitle = GetBestWindowTitle(matchingProcs),
                     };
                     _appSessions[item.name] = state;
                     foreach (var proc in matchingProcs)
@@ -351,7 +345,7 @@ public sealed class ProcessUsageTracker : IDisposable
                     if (totalSec < MinimumSessionSeconds)
                         DeleteSession(item.id);
                     else
-                        CloseSession(item.id, expectedEndTime, totalSec, null);
+                        CloseSession(item.id, expectedEndTime, totalSec);
                 }
             }
         }
@@ -359,21 +353,6 @@ public sealed class ProcessUsageTracker : IDisposable
         {
             _logger.LogWarning(ex, "恢复未完成会话失败");
         }
-    }
-
-    private static string? GetBestWindowTitle(List<Process> procs)
-    {
-        foreach (var proc in procs)
-        {
-            try
-            {
-                var title = proc.MainWindowTitle?.Trim();
-                if (!string.IsNullOrWhiteSpace(title))
-                    return title;
-            }
-            catch { }
-        }
-        return null;
     }
 
     // ==================== 现有进程捕获 ====================
@@ -409,14 +388,10 @@ public sealed class ProcessUsageTracker : IDisposable
                     startTime = DateTime.Now;
                 }
                 var appName = NormalizeProcessName(procName);
-                string? title = null;
-                try
-                {
-                    title = proc.MainWindowTitle;
-                }
-                catch { }
 
-                AddProcessToAppSession((uint)proc.Id, appName, startTime, title);
+                // IsUserApplication 已确认该进程有主窗口（MainWindowHandle != 0），
+                // 不再读取窗口标题本身——标题不落库。
+                AddProcessToAppSession((uint)proc.Id, appName, startTime);
             }
         }
         catch (Exception ex)
@@ -451,12 +426,18 @@ public sealed class ProcessUsageTracker : IDisposable
         }
     }
 
-    private void CloseSession(
-        long sessionId,
-        DateTime endTime,
-        double finalAccumulatedSeconds,
-        string? windowTitle
-    )
+    /// <summary>
+    /// 关闭会话，写入结束时间与最终累计时长。
+    ///
+    /// 隐私决策（个人自用改造）：<b>不落库窗口标题</b>。窗口标题会包含文件名、
+    /// 网页标题、聊天对象名等敏感信息，长期明文留存会形成完整的行为档案。
+    /// 该字段在 UI 层没有任何消费方——<c>AppUsageViewModel</c> 的 SQL 只读
+    /// ProcessName / AccumulatedSeconds / StartTime / EndTime，
+    /// <c>Models.AppUsageItem</c> 也没有标题字段。因此去掉它对界面零影响。
+    ///
+    /// 数据库 schema 保留 WindowTitle 列（避免破坏已有库），只是恒为 NULL。
+    /// </summary>
+    private void CloseSession(long sessionId, DateTime endTime, double finalAccumulatedSeconds)
     {
         try
         {
@@ -465,12 +446,11 @@ public sealed class ProcessUsageTracker : IDisposable
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
                 UPDATE ProcessSession
-                SET EndTime = $end, WindowTitle = $title,
+                SET EndTime = $end, WindowTitle = NULL,
                     AccumulatedSeconds = $acc, LastUpdateTime = $end
                 WHERE Id = $id
                 """;
             cmd.Parameters.AddWithValue("$end", endTime.ToString("yyyy-MM-dd HH:mm:ss.fff"));
-            cmd.Parameters.AddWithValue("$title", (object?)windowTitle ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$acc", finalAccumulatedSeconds);
             cmd.Parameters.AddWithValue("$id", sessionId);
             cmd.ExecuteNonQuery();
@@ -501,13 +481,18 @@ public sealed class ProcessUsageTracker : IDisposable
     // ==================== 定时刷新与累计 ====================
     private void RefreshAndAccumulate()
     {
-        RefreshWindowTitles(); // 包含窗口标题更新 + 待确认进程检查
+        // 待确认进程检查仍需保留（用于把稍后才有窗口的进程晋升为正式会话），
+        // 但不再刷新窗口标题——标题不再落库，采集它没有意义，
+        // 还会每 5 秒对每个会话做一次 Process.GetProcessById + MainWindowTitle 读取。
+        CheckPendingProcessesForWindow();
         AccumulateRunningSessions(); // 更新累计时长
     }
 
     private void AccumulateRunningSessions()
     {
         var now = DateTime.Now;
+        var updates = new List<(long Id, double Sec, DateTime Time)>();
+
         foreach (var kvp in _appSessions)
         {
             var state = kvp.Value;
@@ -518,41 +503,56 @@ public sealed class ProcessUsageTracker : IDisposable
             {
                 state.AccumulatedSeconds += delta;
                 state.LastUpdateTime = now;
-                _ = UpdateAccumulatedTimeAsync(state.SessionId, state.AccumulatedSeconds, now);
+                updates.Add((state.SessionId, state.AccumulatedSeconds, now));
             }
         }
-    }
 
-    private async Task UpdateAccumulatedTimeAsync(
-        long sessionId,
-        double accumulatedSeconds,
-        DateTime updateTime
-    )
-    {
+        if (updates.Count == 0)
+            return;
+
+        // 原实现是逐条 fire-and-forget 异步写（WMI 线程同时也在写），
+        // 同库并发写会抛 SQLITE_BUSY，而异常只被记成一条 LogWarning，
+        // 表现为累计时长偶尔少几秒却无任何提示。改为单连接 + 单事务批量写。
         try
         {
             using var conn = new SqliteConnection($"Data Source={_dbPath}");
-            await conn.OpenAsync();
+            conn.Open();
+            using var transaction = conn.BeginTransaction();
             using var cmd = conn.CreateCommand();
+            cmd.Transaction = transaction;
             cmd.CommandText =
                 "UPDATE ProcessSession SET AccumulatedSeconds = @sec, LastUpdateTime = @time WHERE Id = @id";
-            cmd.Parameters.AddWithValue("@sec", accumulatedSeconds);
-            cmd.Parameters.AddWithValue("@time", updateTime.ToString("yyyy-MM-dd HH:mm:ss.fff"));
-            cmd.Parameters.AddWithValue("@id", sessionId);
-            await cmd.ExecuteNonQueryAsync();
+            var secParam = cmd.Parameters.Add("@sec", Microsoft.Data.Sqlite.SqliteType.Real);
+            var timeParam = cmd.Parameters.Add("@time", Microsoft.Data.Sqlite.SqliteType.Text);
+            var idParam = cmd.Parameters.Add("@id", Microsoft.Data.Sqlite.SqliteType.Integer);
+            cmd.Prepare();
+
+            foreach (var (id, sec, time) in updates)
+            {
+                secParam.Value = sec;
+                timeParam.Value = time.ToString("yyyy-MM-dd HH:mm:ss.fff");
+                idParam.Value = id;
+                cmd.ExecuteNonQuery();
+            }
+
+            transaction.Commit();
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "更新累计时长失败 SessionId={Id}", sessionId);
+            _logger.LogWarning(ex, "批量更新累计时长失败（{Count} 条）", updates.Count);
         }
     }
 
     // ==================== 进程添加/移除 ====================
+    /// <remarks>
+    /// 隐私决策（个人自用改造）：只记录「哪个程序、开了多久」，<b>不采集窗口标题</b>。
+    /// 标题会包含文件名、网页标题、聊天对象名，长期明文留存等于建立完整行为档案。
+    /// 该字段在 UI 层无任何消费方，删除对界面零影响。
+    /// </remarks>
     private void AddProcessToAppSession(
         uint processId,
         string appName,
-        DateTime startTime,
-        string? windowTitle
+        DateTime startTime
     )
     {
         _pidToAppName[processId] = appName;
@@ -561,24 +561,18 @@ public sealed class ProcessUsageTracker : IDisposable
             _ =>
             {
                 var sessionId = InsertAppSession(appName, startTime);
-                var state = new AppSessionState
+                return new AppSessionState
                 {
                     ProcessCount = 1,
                     SessionId = sessionId,
                     StartTime = startTime,
                     LastUpdateTime = startTime,
                     AccumulatedSeconds = 0,
-                    LastWindowTitle = string.IsNullOrWhiteSpace(windowTitle)
-                        ? null
-                        : windowTitle.Trim(),
                 };
-                return state;
             },
             (_, state) =>
             {
                 Interlocked.Increment(ref state.ProcessCount);
-                if (!string.IsNullOrWhiteSpace(windowTitle))
-                    state.LastWindowTitle = windowTitle.Trim();
                 return state;
             }
         );
@@ -605,7 +599,7 @@ public sealed class ProcessUsageTracker : IDisposable
                     }
                     else
                     {
-                        CloseSession(state.SessionId, now, totalSeconds, state.LastWindowTitle);
+                        CloseSession(state.SessionId, now, totalSeconds);
                     }
                 }
             }
@@ -685,42 +679,28 @@ public sealed class ProcessUsageTracker : IDisposable
         }
 
         bool hasWindow = false;
-        string? title = null;
         try
         {
             using var proc = Process.GetProcessById((int)pid);
             hasWindow = proc.MainWindowHandle != IntPtr.Zero;
-            if (hasWindow)
-                title = proc.MainWindowTitle;
         }
         catch
         {
-            // _logger.LogDebug(ex, "检查进程 {App} 窗口句柄失败", appName);
+            // 进程可能已退出，取不到窗口句柄，按无窗口处理
         }
 
-        if (hasWindow && !string.IsNullOrWhiteSpace(title))
+        if (hasWindow)
         {
-            _logger.LogInformation(
-                "进程 {App} (PID {Pid}) 已有窗口，直接添加会话，标题：{Title}",
-                appName,
-                pid,
-                title
-            );
-            AddProcessToAppSession(pid, appName, startTime, title);
+            AddProcessToAppSession(pid, appName, startTime);
         }
         else
         {
-            // _logger.LogInformation(
-            //     "进程 {App} (PID {Pid}) 暂未出现窗口，加入等待队列（当前队列 {Count}）",
-            //     appName,
-            //     pid,
-            //     _pendingProcesses.Count + 1
-            // );
+            // 进程刚启动时窗口通常还没出现，先放入待确认队列，
+            // 之后由 CheckPendingProcessesForWindow 定期检查并晋升。
             _pendingProcesses[pid] = new PendingProcessInfo
             {
                 AppName = appName,
                 StartTime = startTime,
-                AddedAt = DateTime.UtcNow,
             };
             // 之前的 3 秒超时丢弃代码删除，或至少把超时日志化
         }
@@ -736,43 +716,9 @@ public sealed class ProcessUsageTracker : IDisposable
         RemoveProcessFromAppSession(pid);
     }
 
-    // ==================== 窗口标题刷新 & 待确认进程检查 ====================
-    private void RefreshWindowTitles()
-    {
-        try
-        {
-            foreach (var kvp in _appSessions)
-            {
-                var state = kvp.Value;
-                if (state.ProcessCount <= 0)
-                    continue;
-                uint? pid = _pidToAppName
-                    .FirstOrDefault(x =>
-                        x.Value.Equals(kvp.Key, StringComparison.OrdinalIgnoreCase)
-                    )
-                    .Key;
-                if (pid != null)
-                {
-                    var title = GetWindowTitle(pid.Value);
-                    if (!string.IsNullOrWhiteSpace(title))
-                        state.LastWindowTitle = title.Trim();
-                }
-            }
-
-            CheckPendingProcessesForWindow();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "刷新窗口标题出错");
-        }
-    }
-
+    // ==================== 待确认进程检查 ====================
     private void CheckPendingProcessesForWindow()
     {
-        // int pendingCount = _pendingProcesses.Count;
-        // if (pendingCount > 0)
-        // _logger.LogDebug("检查 {Count} 个待确认进程的窗口状态...", pendingCount);
-
         foreach (var kvp in _pendingProcesses)
         {
             var pid = kvp.Key;
@@ -782,44 +728,22 @@ public sealed class ProcessUsageTracker : IDisposable
                 using var proc = Process.GetProcessById((int)pid);
                 if (proc.MainWindowHandle != IntPtr.Zero)
                 {
-                    var title = proc.MainWindowTitle;
+                    // 这里仍需读取标题：仅用于判断 MainWindowHandle 是否已就绪，
+                    // 不再保存到数据库。
                     if (
-                        !string.IsNullOrWhiteSpace(title) && _pendingProcesses.TryRemove(pid, out _)
+                        !string.IsNullOrWhiteSpace(proc.MainWindowTitle)
+                        && _pendingProcesses.TryRemove(pid, out _)
                     )
                     {
-                        _logger.LogInformation(
-                            "待确认进程 {App} (PID {Pid}) 窗口已出现，转移到追踪，标题：{Title}",
-                            pending.AppName,
-                            pid,
-                            title
-                        );
-                        AddProcessToAppSession(pid, pending.AppName, pending.StartTime, title);
+                        AddProcessToAppSession(pid, pending.AppName, pending.StartTime);
                     }
                 }
             }
             catch
             {
-                // _logger.LogDebug(
-                //     ex,
-                //     "检查待确认进程 {App} (PID {Pid}) 时出错，可能已退出",
-                //     pending.AppName,
-                //     pid
-                // );
-                _pendingProcesses.TryRemove(pid, out _); // 进程已死，移除
+                // 进程已退出，移除
+                _pendingProcesses.TryRemove(pid, out _);
             }
-        }
-    }
-
-    private static string? GetWindowTitle(uint processId)
-    {
-        try
-        {
-            using var proc = Process.GetProcessById((int)processId);
-            return proc.MainWindowTitle?.Trim();
-        }
-        catch
-        {
-            return null;
         }
     }
 
@@ -953,7 +877,6 @@ public sealed class ProcessUsageTracker : IDisposable
         public int ProcessCount;
         public long SessionId;
         public DateTime StartTime;
-        public string? LastWindowTitle;
         public double AccumulatedSeconds;
         public DateTime LastUpdateTime;
     }
@@ -962,6 +885,5 @@ public sealed class ProcessUsageTracker : IDisposable
     {
         public string AppName { get; set; } = string.Empty;
         public DateTime StartTime { get; set; }
-        public DateTime AddedAt { get; set; }
     }
 }

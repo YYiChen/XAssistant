@@ -12,7 +12,15 @@ public partial class KeyCounterViewModel : ViewModelBase
     private readonly IKeyboardHookService _hookService;
     private readonly IKeyDatabaseService _dbService;
     private readonly IConfigurationService _configService;
+    private readonly IKeyPressBuffer _buffer;
     private DateTime _currentDate = DateTime.Today;
+
+    // UI 更新节流：合并为最多每 50ms 一次，避免高频按键把 Dispatcher 队列打满。
+    private static readonly TimeSpan UiThrottleInterval = TimeSpan.FromMilliseconds(50);
+    private readonly object _uiGate = new();
+    private readonly Dictionary<string, int> _pendingKeys = new();
+    private bool _uiFlushScheduled;
+    private DateTime _lastUiFlush = DateTime.MinValue;
 
     // 总计
     public ObservableCollection<KeyCountItem> KeyCounts { get; } = new();
@@ -47,12 +55,14 @@ public partial class KeyCounterViewModel : ViewModelBase
     public KeyCounterViewModel(
         IKeyboardHookService hookService,
         IKeyDatabaseService dbService,
-        IConfigurationService configService
+        IConfigurationService configService,
+        IKeyPressBuffer buffer
     )
     {
         _hookService = hookService;
         _dbService = dbService;
         _configService = configService;
+        _buffer = buffer;
 
         _hookService.KeyPressed += OnKeyPressed;
 
@@ -73,10 +83,9 @@ public partial class KeyCounterViewModel : ViewModelBase
 
     private void OnKeyPressed(string key)
     {
-        var record = new Models.KeyPressRecord { Key = key, PressTime = DateTime.Now };
-
-        // 持久化到数据库
-        _dbService.SaveKeyPress(record);
+        // 热路径：只入队。数据库写入由后台批量刷盘完成，
+        // 绝不在低级钩子回调里做 I/O（原实现会导致输入延迟）。
+        _buffer.Enqueue(new Models.KeyPressRecord { Key = key, PressTime = DateTime.Now });
 
         // 检测是否跨天
         DateTime today = DateTime.Today;
@@ -85,31 +94,96 @@ public partial class KeyCounterViewModel : ViewModelBase
             _currentDate = today;
             // 重新加载所有时间段数据
             LoadAllCounts();
+            return;
         }
-        else
-        {
-            // 未跨天，增量更新内存集合
-            WpfApplication.Current.Dispatcher.InvokeAsync(() =>
-            {
-                // 更新总计
-                UpdateCollection(KeyCounts, key);
-                // 更新今天
-                UpdateCollection(TodayKeyCounts, key);
 
-                // 集合变化后通知聚合属性
-                OnPropertyChanged(nameof(KeyTodayPresses));
-                OnPropertyChanged(nameof(KeyTotalPresses));
-            });
+        // 累计到待刷新字典，按节流合并派发
+        lock (_uiGate)
+        {
+            _pendingKeys.TryGetValue(key, out var n);
+            _pendingKeys[key] = n + 1;
+
+            var now = DateTime.UtcNow;
+            if (_uiFlushScheduled || (now - _lastUiFlush) < UiThrottleInterval)
+                return;
+
+            _uiFlushScheduled = true;
+            _lastUiFlush = now;
         }
+
+        ScheduleUiFlush();
     }
 
-    private void UpdateCollection(ObservableCollection<KeyCountItem> collection, string key)
+    private void ScheduleUiFlush()
+    {
+        var delay = UiThrottleInterval - (DateTime.UtcNow - _lastUiFlush);
+        if (delay < TimeSpan.Zero)
+            delay = TimeSpan.Zero;
+
+        var timer = new System.Windows.Threading.DispatcherTimer(
+            System.Windows.Threading.DispatcherPriority.Background,
+            WpfApplication.Current.Dispatcher
+        )
+        {
+            Interval = delay,
+        };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            FlushUiCounters();
+        };
+        timer.Start();
+    }
+
+    private void FlushUiCounters()
+    {
+        Dictionary<string, int> pending;
+        lock (_uiGate)
+        {
+            if (_pendingKeys.Count == 0)
+            {
+                _uiFlushScheduled = false;
+                return;
+            }
+            pending = new Dictionary<string, int>(_pendingKeys);
+            _pendingKeys.Clear();
+            _uiFlushScheduled = false;
+            _lastUiFlush = DateTime.UtcNow;
+        }
+
+        WpfApplication.Current.Dispatcher.Invoke(() =>
+        {
+            foreach (var kv in pending)
+            {
+                UpdateCollection(KeyCounts, kv.Key, kv.Value);
+                UpdateCollection(TodayKeyCounts, kv.Key, kv.Value);
+            }
+
+            OnPropertyChanged(nameof(KeyTodayPresses));
+            OnPropertyChanged(nameof(KeyTotalPresses));
+        });
+
+        // 节流窗口内可能又攒了新计数，继续排一次
+        lock (_uiGate)
+        {
+            if (_pendingKeys.Count == 0)
+                return;
+            _uiFlushScheduled = true;
+        }
+        ScheduleUiFlush();
+    }
+
+    private void UpdateCollection(
+        ObservableCollection<KeyCountItem> collection,
+        string key,
+        int delta
+    )
     {
         var item = collection.FirstOrDefault(x => x.Key == key);
         if (item != null)
-            item.Count++;
+            item.Count += delta;
         else
-            collection.Add(new KeyCountItem { Key = key, Count = 1 });
+            collection.Add(new KeyCountItem { Key = key, Count = delta });
     }
 
     private void LoadAllCounts()

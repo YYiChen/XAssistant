@@ -58,6 +58,10 @@ public partial class App : System.Windows.Application
         services.AddSingleton<IMouseClickHookService, MouseClickHookService>();
         services.AddSingleton<IClickDatabaseService, ClickDatabaseService>();
         services.AddSingleton<IConfigurationService, ConfigurationService>();
+        // 输入记录缓冲：把数据库 I/O 移出低级钩子回调，消除输入延迟。
+        // 必须是单例，且在 ViewModel 之前注册。
+        services.AddSingleton<IMouseClickBuffer, MouseClickBuffer>();
+        services.AddSingleton<IKeyPressBuffer, KeyPressBuffer>();
 #if DEBUG
         services.AddSingleton<IStartupService>(_ => new StartupService("XAssistant_Dev"));
 #else
@@ -98,6 +102,16 @@ public partial class App : System.Windows.Application
         // 构建容器
         var provider = services.BuildServiceProvider();
         Services = provider;
+
+        // 启动输入记录缓冲的后台刷盘循环
+        provider.GetRequiredService<IMouseClickBuffer>().Start();
+        provider.GetRequiredService<IKeyPressBuffer>().Start();
+
+        // 订阅注销/关机事件，确保会话数据落盘。
+        // 上游只写了退订（OnExit 里 -= OnSessionEnding）却从未订阅，
+        // 导致 OnSessionEnding 形同虚设，注销时未结束的会话只能等下次启动
+        // 靠启发式猜结束时间。此处补上缺失的订阅。
+        SystemEvents.SessionEnding += OnSessionEnding;
 
         // 启动进程追踪
         var processTracker = provider.GetRequiredService<ProcessUsageTracker>();
@@ -207,6 +221,24 @@ public partial class App : System.Windows.Application
         catch (Exception ex)
         {
             _appLogger?.LogError(ex, "停止进程追踪器失败");
+        }
+
+        // 冲刷输入缓冲：把内存里尚未落盘的按键/点击记录写进数据库。
+        // 同步等待（最多各 3 秒），因为关机流程不会等我们。
+        try
+        {
+            Services.GetRequiredService<IMouseClickBuffer>()
+                .FlushAsync(TimeSpan.FromSeconds(3))
+                .GetAwaiter()
+                .GetResult();
+            Services.GetRequiredService<IKeyPressBuffer>()
+                .FlushAsync(TimeSpan.FromSeconds(3))
+                .GetAwaiter()
+                .GetResult();
+        }
+        catch (Exception ex)
+        {
+            _appLogger?.LogError(ex, "冲刷输入记录缓冲失败");
         }
 
         Log.CloseAndFlush();

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using XAssistant.Models;
 
@@ -9,10 +10,14 @@ namespace XAssistant.Services.Interfaces;
 public interface IClickDatabaseService
 {
     /// <summary>
-    /// 保存一条点击记录。
+    /// 单条写入（仅用于非热路径）。热路径请使用 <see cref="IMouseClickBuffer"/>。
     /// </summary>
-    /// <param name="record">包含按键类型和时间的记录</param>
     void SaveClick(MouseClickRecord record);
+
+    /// <summary>
+    /// 批量写入：单连接 + 单事务。
+    /// </summary>
+    void SaveClickBatch(IReadOnlyList<MouseClickRecord> records);
 
     /// <summary>
     /// 获取各鼠标按键的累计点击次数。
