@@ -19,13 +19,18 @@ public class QuickNoteSettings
 
 public class RecordingSettings
 {
-    public bool AutoStartRecording { get; set; } // 鼠标点击录制自动启动
-    public bool AutoStartKeyRecording { get; set; } // 键盘按键录制自动启动
+    // 个人自用默认：程序启动即自动开始记录，不需手动点「开始记录」。
+    // 注意：这两个开关指的是「启动时自动开启录制」，与「开机自启注册表」是两件事，
+    // 后者由 StartupService 管理（在 OnStartup 时自动注册）。
+    public bool AutoStartRecording { get; set; } = true; // 鼠标点击录制自动启动
+    public bool AutoStartKeyRecording { get; set; } = true; // 键盘按键录制自动启动
 }
 
 public class GeneralSettings
 {
-    public bool StartMinimized { get; set; }
+    // 启动时直接最小化到托盘，不弹主窗口（静默后台运行的前提）。
+    // 托盘图标左键单击可恢复显示。
+    public bool StartMinimized { get; set; } = true;
     public double WindowWidth { get; set; } = 1280;
     public double WindowHeight { get; set; } = 720;
     public bool IsLogExpanded { get; set; } = false;

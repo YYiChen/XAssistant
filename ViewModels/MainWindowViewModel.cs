@@ -19,12 +19,26 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private double _windowWidth;
 
-    partial void OnWindowWidthChanged(double value) => _configService.SetWindowWidth(value);
+    // 最小化时 WPF 会把窗口尺寸报成极小值（本机实测 160x28），
+    // 若照单写入配置，用户每次启动的窗口大小都会被毁掉。
+    // 这里加下限守卫：明显小于最小可用尺寸的值一律不落盘。
+    private const double MinWindowWidth = 400;
+    private const double MinWindowHeight = 300;
+
+    partial void OnWindowWidthChanged(double value)
+    {
+        if (value >= MinWindowWidth)
+            _configService.SetWindowWidth(value);
+    }
 
     [ObservableProperty]
     private double _windowHeight;
 
-    partial void OnWindowHeightChanged(double value) => _configService.SetWindowHeight(value);
+    partial void OnWindowHeightChanged(double value)
+    {
+        if (value >= MinWindowHeight)
+            _configService.SetWindowHeight(value);
+    }
 
     [ObservableProperty]
     private bool _isLogExpanded;

@@ -24,6 +24,12 @@ public partial class App : System.Windows.Application
 
     public App()
     {
+        // 显式声明退出模式：主窗口关闭/隐藏都不退出进程，只有托盘「退出」
+        // （ShutdownApplication）或系统注销时才结束。
+        // WPF 默认是 OnLastWindowClose —— 任何窗口关闭就退出，
+        // 对「常驻后台静默记录」是致命的。
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
         // 全局 UI 线程异常
         DispatcherUnhandledException += (_, e) =>
         {
@@ -126,7 +132,29 @@ public partial class App : System.Windows.Application
 
         var mainWindow = new MainWindow { DataContext = mainVM };
         MainWindow = mainWindow;
-        mainWindow.Show();
+
+        // 开机自启：每次启动都重写注册表项。
+        // 上游只在界面勾选时才写注册表，等于「要先看见窗口才能开自启」——
+        // 与「静默后台、开机即录」的目标矛盾。这里改为启动即注册；
+        // 用户若在界面取消勾选，下次启动会重新注册（这正是「默认开」与
+        // 「用户可覆盖」之间的取舍：自启本身是必须的，界面开关仅控制注册表项，
+        // 取消后本次运行内不再自动注册）。
+        var startupService = provider.GetRequiredService<IStartupService>();
+        startupService.SetAutoStart(true);
+        _appLogger.LogInformation("已注册开机自启：{Path}", Environment.ProcessPath);
+
+        // 启动时最小化到托盘，不弹窗口。托盘图标左键单击可恢复。
+        var configService = provider.GetRequiredService<IConfigurationService>();
+        if (configService.Settings.General.StartMinimized)
+        {
+            // 先 Show 再设 Minimized：WPF 要求窗口已创建才能改变 WindowState
+            mainWindow.Show();
+            mainWindow.WindowState = WindowState.Minimized;
+        }
+        else
+        {
+            mainWindow.Show();
+        }
 
         // 速记唤起：注册全局热键，热键按下 → 唤起捕获窗
         _quickNoteCapture = provider.GetRequiredService<QuickNoteCaptureService>();
