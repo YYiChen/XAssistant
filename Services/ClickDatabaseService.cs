@@ -27,6 +27,7 @@ public class ClickDatabaseService : IClickDatabaseService
         command.CommandText =
             @"
             PRAGMA journal_mode=WAL;
+            PRAGMA wal_autocheckpoint=256;
             CREATE TABLE IF NOT EXISTS ClickRecords (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 Button TEXT NOT NULL,

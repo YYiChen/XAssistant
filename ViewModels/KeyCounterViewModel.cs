@@ -186,43 +186,62 @@ public partial class KeyCounterViewModel : ViewModelBase
             collection.Add(new KeyCountItem { Key = key, Count = delta });
     }
 
+    /// <summary>
+    /// 重新加载各时间段统计。
+    ///
+    /// 注意：这里用 <c>Dispatcher.InvokeAsync</c> 而非 <c>Invoke</c>。
+    /// <c>Invoke</c> 是同步阻塞的，而本方法由 OnKeyPressed 触发 —— 后者运行在
+    /// 低级键盘钩子回调线程上。若在这里同步等 UI 线程执行 4 次数据库聚合查询，
+    /// 跨天那一刻会把 UI 线程卡住，直接体现为「键盘突然卡一下」。
+    /// 数据量越大（当前已有数千行）越明显。
+    /// </summary>
     private void LoadAllCounts()
     {
-        WpfApplication.Current.Dispatcher.Invoke(() =>
+        WpfApplication.Current.Dispatcher.InvokeAsync(() =>
         {
-            // 总计
-            var totalDict = _dbService.GetKeyCounts();
-            KeyCounts.Clear();
-            foreach (var kv in totalDict.OrderByDescending(x => x.Value))
-                KeyCounts.Add(new KeyCountItem { Key = kv.Key, Count = kv.Value });
-
-            // 今天
-            var todayDict = _dbService.GetKeyCounts(DateTime.Today, DateTime.Today.AddDays(1));
-            TodayKeyCounts.Clear();
-            foreach (var kv in todayDict.OrderByDescending(x => x.Value))
-                TodayKeyCounts.Add(new KeyCountItem { Key = kv.Key, Count = kv.Value });
-
-            // 昨天
-            var yesterdayDict = _dbService.GetKeyCounts(DateTime.Today.AddDays(-1), DateTime.Today);
-            YesterdayKeyCounts.Clear();
-            foreach (var kv in yesterdayDict.OrderByDescending(x => x.Value))
-                YesterdayKeyCounts.Add(new KeyCountItem { Key = kv.Key, Count = kv.Value });
-
-            // 前天
-            var dayBeforeDict = _dbService.GetKeyCounts(
-                DateTime.Today.AddDays(-2),
-                DateTime.Today.AddDays(-1)
-            );
-            DayBeforeYesterdayKeyCounts.Clear();
-            foreach (var kv in dayBeforeDict.OrderByDescending(x => x.Value))
-                DayBeforeYesterdayKeyCounts.Add(
-                    new KeyCountItem { Key = kv.Key, Count = kv.Value }
-                );
-
-            // 通知聚合属性更新
-            OnPropertyChanged(nameof(KeyTodayPresses));
-            OnPropertyChanged(nameof(KeyTotalPresses));
+            try
+            {
+                ReloadAllCountsCore();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"重新加载按键统计失败: {ex.Message}");
+            }
         });
+    }
+
+    private void ReloadAllCountsCore()
+    {
+        // 总计
+        var totalDict = _dbService.GetKeyCounts();
+        KeyCounts.Clear();
+        foreach (var kv in totalDict.OrderByDescending(x => x.Value))
+            KeyCounts.Add(new KeyCountItem { Key = kv.Key, Count = kv.Value });
+
+        // 今天
+        var todayDict = _dbService.GetKeyCounts(DateTime.Today, DateTime.Today.AddDays(1));
+        TodayKeyCounts.Clear();
+        foreach (var kv in todayDict.OrderByDescending(x => x.Value))
+            TodayKeyCounts.Add(new KeyCountItem { Key = kv.Key, Count = kv.Value });
+
+        // 昨天
+        var yesterdayDict = _dbService.GetKeyCounts(DateTime.Today.AddDays(-1), DateTime.Today);
+        YesterdayKeyCounts.Clear();
+        foreach (var kv in yesterdayDict.OrderByDescending(x => x.Value))
+            YesterdayKeyCounts.Add(new KeyCountItem { Key = kv.Key, Count = kv.Value });
+
+        // 前天
+        var dayBeforeDict = _dbService.GetKeyCounts(
+            DateTime.Today.AddDays(-2),
+            DateTime.Today.AddDays(-1)
+        );
+        DayBeforeYesterdayKeyCounts.Clear();
+        foreach (var kv in dayBeforeDict.OrderByDescending(x => x.Value))
+            DayBeforeYesterdayKeyCounts.Add(new KeyCountItem { Key = kv.Key, Count = kv.Value });
+
+        // 通知聚合属性更新
+        OnPropertyChanged(nameof(KeyTodayPresses));
+        OnPropertyChanged(nameof(KeyTotalPresses));
     }
 
     [RelayCommand]

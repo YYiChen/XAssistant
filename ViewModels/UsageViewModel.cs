@@ -31,6 +31,19 @@ public partial class UsageViewModel : ViewModelBase
     [ObservableProperty]
     private ObservableCollection<SessionEvent> _sessionEvents = new();
 
+    /// <summary>
+    /// UsageTracker 服务是否已被判定为不可用。
+    ///
+    /// 该服务是「电脑使用时长」的唯一数据源，独立于本程序运行（阶段 D 才装）。
+    /// 未安装时每 5 秒重试一次会刷出三条异常（管道 / 历史 / 事件表），
+    /// 实测单日可产生 4 万条错误日志、日志文件涨到 40MB。
+    /// 故一旦确认不可用，改为每 5 分钟试一次，恢复后自动回到正常频率。
+    /// </summary>
+    private bool _usageTrackerUnavailable;
+    private DateTime _nextProbe = DateTime.MinValue;
+
+    private static readonly TimeSpan RetryWhenUnavailable = TimeSpan.FromMinutes(5);
+
     public UsageViewModel(ILogger<UsageViewModel> logger)
     {
         _logger = logger;
@@ -39,12 +52,22 @@ public partial class UsageViewModel : ViewModelBase
         {
             if (_isRefreshing)
                 return;
+
+            // 服务不可用时降频，避免每秒刷三条异常堆满日志
+            if (_usageTrackerUnavailable && DateTime.Now < _nextProbe)
+                return;
+
             _isRefreshing = true;
             try
             {
                 await RefreshTodayAsync();
                 await LoadHistoryAsync();
                 await LoadSessionEventsAsync();
+                if (_usageTrackerUnavailable)
+                {
+                    _usageTrackerUnavailable = false;
+                    _logger.LogInformation("UsageTracker 服务已恢复，恢复正常刷新频率");
+                }
             }
             catch (Exception ex)
             {
@@ -101,7 +124,19 @@ public partial class UsageViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "管道获取今日秒数失败，回退到数据库");
+            // 首次失败才记日志，后续由定时器降频控制，不重复刷屏
+            if (!_usageTrackerUnavailable)
+            {
+                _usageTrackerUnavailable = true;
+                _nextProbe = DateTime.Now + RetryWhenUnavailable;
+                _logger.LogWarning(
+                    ex,
+                    "UsageTracker 服务不可用（尚未安装或未运行）。"
+                        + "「电脑使用时长」将显示为不可用；其余统计功能不受影响。"
+                        + "已切换为每 5 分钟重试一次"
+                );
+            }
+
             try
             {
                 var dbSeconds = LoadTodaySecondsFromDb();
@@ -112,8 +147,11 @@ public partial class UsageViewModel : ViewModelBase
             }
             catch (Exception dbEx)
             {
-                _logger.LogError(dbEx, "数据库读取今日秒数也失败");
-                TodayUsageText = "无法获取";
+                if (!_usageTrackerUnavailable)
+                {
+                    _logger.LogError(dbEx, "数据库读取今日秒数也失败");
+                }
+                TodayUsageText = "未安装电脑时长服务";
                 return 0;
             }
         }
@@ -272,7 +310,10 @@ public partial class UsageViewModel : ViewModelBase
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "后台加载历史记录失败");
+                // 服务未安装时该异常每轮必现，已由 RefreshTodayAsync 统一标记并降频，
+                // 此处只记首次，避免日志被刷爆
+                if (!_usageTrackerUnavailable)
+                    _logger.LogError(ex, "后台加载历史记录失败");
             }
         });
         History = list;
@@ -443,7 +484,8 @@ public partial class UsageViewModel : ViewModelBase
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "后台加载会话事件失败");
+                if (!_usageTrackerUnavailable)
+                    _logger.LogError(ex, "后台加载会话事件失败");
             }
         });
 

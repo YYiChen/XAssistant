@@ -27,6 +27,7 @@ public class KeyDatabaseService : IKeyDatabaseService
         cmd.CommandText =
             @"
             PRAGMA journal_mode=WAL;
+            PRAGMA wal_autocheckpoint=256;
             CREATE TABLE IF NOT EXISTS KeyPressRecords (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 Key TEXT NOT NULL,

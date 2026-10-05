@@ -78,26 +78,35 @@ public sealed class BatchWriteBuffer<T> : IDisposable
 
     /// <summary>等待队列排空且在途批次落盘。</summary>
     /// <param name="timeout">等待上限。</param>
-    /// <returns>超时前成功落盘的条数；返回值仅供日志参考。</returns>
     public async Task FlushAsync(TimeSpan timeout)
     {
+        // 空闲判据不能用 _channel.Reader.Count：ChannelReader<T>.Count 只在
+        // CanCount 为 true 时可用，对无界 Channel 会抛 NotSupportedException。
+        // 改用「能否再读出一条」来判定队列是否排空——这是无界通道的通用做法。
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {
-            if (_channel.Reader.Count == 0 && Volatile.Read(ref _inFlight) == 0)
+            if (!_channel.Reader.TryPeek(out _) && Volatile.Read(ref _inFlight) == 0)
                 return;
             await Task.Delay(20).ConfigureAwait(false);
         }
+
         _logger.LogWarning(
-            "冲刷 {_Record} 超时，队列剩余 {Queued} 条，在途 {InFlight} 条",
+            "冲刷 {_Record} 超时，队列仍有 {InFlight} 条在途",
             _recordName,
-            _channel.Reader.Count,
             Volatile.Read(ref _inFlight)
         );
     }
 
     private async Task RunAsync(CancellationToken ct)
     {
+        // 累积缓冲区跨循环迭代复用。
+        //
+        // 关键：batch 不能在每轮循环开头 Clear()。
+        // 若那样做，当「未达刷盘阈值」而走 continue 分支时，
+        // 上一轮已从 channel 读出的记录会被清掉 —— 它们既不在 channel 里
+        // 也不在任何 batch 里，永久丢失。
+        // 这正是此前「按键数量莫名其妙少一截」的根因。
         var batch = new List<T>(BatchSize);
         var lastFlush = DateTime.UtcNow;
 
@@ -115,47 +124,64 @@ public sealed class BatchWriteBuffer<T> : IDisposable
                     break;
                 }
 
-                batch.Clear();
+                // 只在 batch 未满时继续补充，已满则直接刷盘
                 while (batch.Count < BatchSize && _channel.Reader.TryRead(out var item))
                 {
                     batch.Add(item);
                 }
 
                 var dueByTime = (DateTime.UtcNow - lastFlush) >= FlushInterval;
+
+                // 未满且未到时间：等一小会儿再看，期间累积的记录保留在 batch 里。
+                // 绝对不能 Clear —— 那是丢数据的根源。
                 if (batch.Count < BatchSize && !dueByTime)
                 {
-                    // 未达刷盘阈值：短暂等待而不是立刻小批量写库，
-                    // 避免输入密集时产生大量碎片事务。
-                    try
+                    var wait = FlushInterval - (DateTime.UtcNow - lastFlush);
+                    if (wait > TimeSpan.Zero)
                     {
-                        await Task.Delay(FlushInterval, ct).ConfigureAwait(false);
+                        try
+                        {
+                            await Task.Delay(wait, ct).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            break;
+                        }
                     }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-                    lastFlush = DateTime.UtcNow;
+                    // 等待期间可能又攒够了：回到循环顶部的 TryRead 继续补充
                     continue;
                 }
 
-                await WriteWithRetryAsync(batch, ct).ConfigureAwait(false);
+                if (batch.Count > 0)
+                {
+                    await WriteWithRetryAsync(batch, ct).ConfigureAwait(false);
+                    batch.Clear();
+                }
                 lastFlush = DateTime.UtcNow;
             }
 
-            // 取消后：把队列里剩下的全部落盘，不丢数据
-            batch.Clear();
+            // 取消/退出前：把残留全部落盘，不丢数据
             while (batch.Count < BatchSize && _channel.Reader.TryRead(out var item))
             {
                 batch.Add(item);
             }
             if (batch.Count > 0)
+            {
                 await WriteWithRetryAsync(batch, ct).ConfigureAwait(false);
+                batch.Clear();
+            }
 
-            var tail = new List<T>();
             while (_channel.Reader.TryRead(out var item))
-                tail.Add(item);
-            if (tail.Count > 0)
-                await WriteWithRetryAsync(tail, ct).ConfigureAwait(false);
+            {
+                batch.Add(item);
+                if (batch.Count >= BatchSize)
+                {
+                    await WriteWithRetryAsync(batch, ct).ConfigureAwait(false);
+                    batch.Clear();
+                }
+            }
+            if (batch.Count > 0)
+                await WriteWithRetryAsync(batch, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -175,15 +201,20 @@ public sealed class BatchWriteBuffer<T> : IDisposable
         Interlocked.Add(ref _inFlight, batch.Count);
         try
         {
-            while (!ct.IsCancellationRequested)
+            while (true)
             {
-                try
+                // 最后一次尝试不受 ct 约束：即便应用正在退出，
+                // 也要尽力把这批数据落盘，而不是静默丢弃。
+                if (ct.IsCancellationRequested)
                 {
-                    await Task.Run(() => _writeBatch(batch), ct).ConfigureAwait(false);
+                    TryWriteDirect(batch);
                     return;
                 }
-                catch (OperationCanceledException)
+
+                try
                 {
+                    await Task.Run(() => _writeBatch(batch), CancellationToken.None)
+                        .ConfigureAwait(false);
                     return;
                 }
                 catch (Exception ex)
@@ -200,6 +231,8 @@ public sealed class BatchWriteBuffer<T> : IDisposable
                     }
                     catch (OperationCanceledException)
                     {
+                        // 已取消：做一次不带 ct 的收尾尝试，然后放弃
+                        TryWriteDirect(batch);
                         return;
                     }
                 }
@@ -217,9 +250,21 @@ public sealed class BatchWriteBuffer<T> : IDisposable
             return;
         try
         {
-            // 不取消 CTS：让 worker 自然读到队列排空（TryComplete 后 WaitToReadAsync 返回 false）
+            // 不取消 CTS：让 worker 自然读到队列排空（TryComplete 后
+            // WaitToReadAsync 返回 false），从而把 batch + 队列残留全部落盘。
             _channel.Writer.TryComplete();
             _worker?.Wait(TimeSpan.FromSeconds(5));
+
+            // 兜底：worker 若在重试循环里卡住或已超时退出，这里在当前线程
+            // 同步把队列剩余直接写掉。不依赖后台任务，不抛异常到调用方。
+            if (_worker != null && !_worker.IsCompleted)
+            {
+                _logger.LogWarning(
+                    "{_Record} 后台刷盘任务未在 5s 内结束，当前线程接管剩余记录",
+                    _recordName
+                );
+            }
+            DrainRemainingSynchronously();
         }
         catch (Exception ex)
         {
@@ -228,6 +273,43 @@ public sealed class BatchWriteBuffer<T> : IDisposable
         finally
         {
             _cts.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 同步把队列中残留的记录直接写库。作为 Dispose 的最后兜底，
+    /// 覆盖「后台任务未及排空就退出」的场景（关机/注销时常见）。
+    /// </summary>
+    private void DrainRemainingSynchronously()
+    {
+        var pending = new List<T>();
+        while (_channel.Reader.TryRead(out var item))
+        {
+            pending.Add(item);
+            if (pending.Count >= 512)
+            {
+                TryWriteDirect(pending);
+                pending.Clear();
+            }
+        }
+        if (pending.Count > 0)
+            TryWriteDirect(pending);
+    }
+
+    private void TryWriteDirect(List<T> batch)
+    {
+        try
+        {
+            _writeBatch(batch);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "退出时兜底写入 {_Record} 失败，{Count} 条记录未能保存",
+                _recordName,
+                batch.Count
+            );
         }
     }
 }
