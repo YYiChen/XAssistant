@@ -63,11 +63,6 @@ public partial class UsageViewModel : ViewModelBase
                 await RefreshTodayAsync();
                 await LoadHistoryAsync();
                 await LoadSessionEventsAsync();
-                if (_usageTrackerUnavailable)
-                {
-                    _usageTrackerUnavailable = false;
-                    _logger.LogInformation("UsageTracker 服务已恢复，恢复正常刷新频率");
-                }
             }
             catch (Exception ex)
             {
@@ -119,6 +114,15 @@ public partial class UsageViewModel : ViewModelBase
                 ts.TotalDays >= 1
                     ? $"{(int)ts.TotalDays} 天 {ts.Hours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}"
                     : $"{(int)ts.TotalHours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}";
+
+            // 走到这里说明管道连通、服务在跑 —— 在此处检测「恢复」才准确。
+            // （不能放在定时器外层：本方法内部已吞掉异常，外层 try 永远捕获不到，
+            //   会把降频标志错误地重置为「已恢复」。）
+            if (_usageTrackerUnavailable)
+            {
+                _usageTrackerUnavailable = false;
+                _logger.LogInformation("UsageTracker 服务已恢复，恢复正常刷新频率");
+            }
 
             return eventSeconds;
         }

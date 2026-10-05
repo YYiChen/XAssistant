@@ -32,11 +32,48 @@ public class KeyboardHookService : IKeyboardHookService, IDisposable
         _proc = HookCallback;
     }
 
+    /// <summary>
+    /// 安装低级键盘钩子。
+    ///
+    /// 与 <see cref="MouseClickHookService.Start"/> 对齐（上游此处两版实现不一致）：
+    /// 1. 防重复：已安装时直接返回。否则重复调用会覆盖 <c>_hookId</c>，
+    ///    旧句柄永久泄漏——它仍挂在钩子链上持续被调用，且 Stop() 只能卸载最新那个，
+    ///    表现为「点了停止记录却仍在记录」。
+    /// 2. 失败检测：SetWindowsHookEx 失败时抛异常。
+    ///    上游实现静默忽略返回值，钩子没装上而界面仍显示「记录中」，
+    ///    用户会以为在记录、实际零数据。
+    /// </summary>
     public void Start()
     {
-        using var curProcess = Process.GetCurrentProcess();
-        using var curModule = curProcess.MainModule!;
-        _hookId = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(curModule.ModuleName), 0);
+        if (_hookId != IntPtr.Zero)
+            return; // 已有一个钩子在运行
+
+        string? moduleName;
+        try
+        {
+            using var curProcess = Process.GetCurrentProcess();
+            moduleName = curProcess.MainModule?.ModuleName;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException("无法获取主模块名称，键盘钩子安装失败。", ex);
+        }
+
+        if (string.IsNullOrEmpty(moduleName))
+            throw new InvalidOperationException("无法获取主模块名称，键盘钩子安装失败。");
+
+        _hookId = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(moduleName), 0);
+
+        if (_hookId == IntPtr.Zero)
+        {
+            int error = Marshal.GetLastWin32Error();
+            _logger.LogError("键盘钩子安装失败，Win32 错误码 {Error}", error);
+            throw new InvalidOperationException($"SetWindowsHookEx 失败，错误代码：{error}");
+        }
+
+        _logger.LogInformation("键盘钩子已安装");
+        // 钩子重建后清空按下状态，避免残留状态导致漏记（例如停止期间某个键未抬起）
+        _pressedKeys.Clear();
     }
 
     public void Stop()

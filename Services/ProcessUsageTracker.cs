@@ -26,6 +26,12 @@ public sealed class ProcessUsageTracker : IDisposable
     private ManagementEventWatcher? _stopWatcher;
     private Timer? _titleRefreshTimer;
 
+    /// <summary>
+    /// WMI 事件订阅失败时置位，改用轮询发现/清理进程。
+    /// 普通用户身份下 WMI 订阅必然失败（需要管理员权限），故这是常态路径之一。
+    /// </summary>
+    private bool _usePollingFallback;
+
     private static readonly string SelfProcessName = NormalizeProcessName(
         Process.GetCurrentProcess().ProcessName
     );
@@ -43,9 +49,25 @@ public sealed class ProcessUsageTracker : IDisposable
         CaptureExistingProcesses();
         StartWatchers();
 
-        // 每 5 秒检查待确认进程并累计各会话时长
+        // 每 5 秒检查待确认进程并累计各会话时长。
+        //
+        // 回调必须包裹 try/catch：System.Threading.Timer 的回调若抛出未处理异常，
+        // 在 .NET 5+ 上会导致【整个进程终止】（实测 AppDomain.UnhandledException
+        // 的 IsTerminating = True，App 层的全局处理器无法阻止）。
+        // 对本程序（开机自启、静默后台、长期记录）来说，进程静默崩溃意味着
+        // 记录毫无征兆地停止、托盘图标消失，用户完全无感知。
         _titleRefreshTimer = new Timer(
-            _ => RefreshAndAccumulate(),
+            _ =>
+            {
+                try
+                {
+                    RefreshAndAccumulate();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "定时刷新进程使用状态失败（已忽略，不影响后续周期）");
+                }
+            },
             null,
             TimeSpan.Zero,
             TimeSpan.FromSeconds(5)
@@ -485,7 +507,88 @@ public sealed class ProcessUsageTracker : IDisposable
         // 但不再刷新窗口标题——标题不再落库，采集它没有意义，
         // 还会每 5 秒对每个会话做一次 Process.GetProcessById + MainWindowTitle 读取。
         CheckPendingProcessesForWindow();
+
+        // WMI 不可用时改用轮询：既发现新进程，也清理已退出的
+        if (_usePollingFallback)
+            PollProcesses();
+
         AccumulateRunningSessions(); // 更新累计时长
+    }
+
+    /// <summary>
+    /// 轮询发现进程与清理退出进程，作为 WMI 事件订阅不可用时的降级方案。
+    ///
+    /// 需要同时做两件事，因为 WMI 的 StartTrace 与 StopTrace 是一起失效的：
+    /// 只发现新进程而不清理已退出的，会让 <c>_pidToAppName</c> 无限增长，
+    /// 且已退出的应用会话永远不会关闭（EndTime 一直是 NULL）。
+    /// </summary>
+    private void PollProcesses()
+    {
+        try
+        {
+            var alivePids = new HashSet<uint>();
+
+            foreach (var proc in Process.GetProcesses())
+            {
+                uint pid;
+                try
+                {
+                    pid = (uint)proc.Id;
+                }
+                catch
+                {
+                    continue; // 进程已退出，取不到 Id
+                }
+
+                alivePids.Add(pid);
+
+                // 已在追踪或已在待确认队列中的，跳过
+                if (_pidToAppName.ContainsKey(pid) || _pendingProcesses.ContainsKey(pid))
+                    continue;
+
+                if (!IsUserApplication(proc))
+                    continue;
+
+                DateTime startTime;
+                try
+                {
+                    startTime = proc.StartTime;
+                }
+                catch
+                {
+                    startTime = DateTime.Now;
+                }
+
+                string procName;
+                try
+                {
+                    procName = proc.ProcessName;
+                }
+                catch
+                {
+                    continue;
+                }
+
+                AddProcessToAppSession(pid, NormalizeProcessName(procName), startTime);
+            }
+
+            // 清理已退出的进程（替代 WMI 的 ProcessStopTrace）
+            foreach (var pid in _pidToAppName.Keys.ToList())
+            {
+                if (!alivePids.Contains(pid))
+                    RemoveProcessFromAppSession(pid);
+            }
+
+            foreach (var pid in _pendingProcesses.Keys.ToList())
+            {
+                if (!alivePids.Contains(pid))
+                    _pendingProcesses.TryRemove(pid, out _);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "轮询发现进程失败（已忽略，不影响后续周期）");
+        }
     }
 
     private void AccumulateRunningSessions()
@@ -607,6 +710,18 @@ public sealed class ProcessUsageTracker : IDisposable
     }
 
     // ==================== WMI 监视 ====================
+    /// <summary>
+    /// 启动进程监视。
+    ///
+    /// 首选 WMI 事件订阅（实时、精确），但 <c>Win32_ProcessStartTrace</c> /
+    /// <c>Win32_ProcessStopTrace</c> 的订阅<b>需要管理员权限</b>：
+    /// 普通用户身份下实测抛 <c>ManagementException: 拒绝访问</c>
+    /// （普通 WMI 查询 <c>Win32_Process</c> 是可以的，仅事件订阅不行）。
+    ///
+    /// 本程序以普通用户运行（开机自启、静默后台，不应要求提权），
+    /// 因此这里检测失败后自动降级为轮询发现进程——
+    /// 否则「各应用使用时长」只能在启动瞬间快照一次，之后新开的程序全都不被记录。
+    /// </summary>
     private void StartWatchers()
     {
         try
@@ -622,10 +737,32 @@ public sealed class ProcessUsageTracker : IDisposable
             );
             _stopWatcher.EventArrived += OnProcessStopped;
             _stopWatcher.Start();
+
+            _logger.LogInformation("已启用 WMI 进程事件监视（实时模式）");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "无法启动 WMI 进程监视");
+            // 清理可能已部分建立的监视器，避免留下半死不活的订阅
+            try
+            {
+                _startWatcher?.Stop();
+                _startWatcher?.Dispose();
+                _stopWatcher?.Stop();
+                _stopWatcher?.Dispose();
+            }
+            catch
+            { /* 清理失败无需处理 */
+            }
+            _startWatcher = null;
+            _stopWatcher = null;
+
+            _usePollingFallback = true;
+            _logger.LogWarning(
+                ex,
+                "WMI 进程事件订阅不可用（通常因为非管理员权限），"
+                    + "已自动降级为每 5 秒轮询发现进程。功能不受影响，"
+                    + "代价是进程启动的检测最多延迟 5 秒"
+            );
         }
     }
 

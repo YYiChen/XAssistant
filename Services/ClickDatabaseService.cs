@@ -87,18 +87,29 @@ public class ClickDatabaseService : IClickDatabaseService
             { "Right", 0 },
         };
 
-        string dateStr = date.ToString("yyyy-MM-dd");
+        // 用范围比较而非 date(ClickTime)：
+        // 对列施加函数会让 idx_clickrecords_clicktime 失效，退化为全表扫描
+        // （EXPLAIN QUERY PLAN 实测：SCAN ClickRecords vs SEARCH ... USING INDEX；
+        //  5628 行时已慢 2.8 倍，且全表扫描随数据量线性恶化）。
+        //
+        // ClickTime 存 ISO 8601（"o" 格式，如 2026-10-05T19:51:23.5304693+08:00），
+        // 其字典序等于时间序，故用前缀范围比较即可。
+        // 显式拼 "yyyy-MM-ddTHH:mm:ss" 而不复用 ToString("o")：
+        // 后者输出是否带时区后缀取决于 DateTime.Kind，用固定格式可避免这一变数。
+        string fromStr = date.Date.ToString("yyyy-MM-dd") + "T00:00:00";
+        string toStr = date.Date.AddDays(1).ToString("yyyy-MM-dd") + "T00:00:00";
+
         using var connection = new SqliteConnection(ConnectionString);
         connection.Open();
         using var cmd = connection.CreateCommand();
-        // SQLite 的 date() 函数可以将 ISO 8601 字符串提取日期部分
         cmd.CommandText =
             @"
         SELECT Button, COUNT(*)
         FROM ClickRecords
-        WHERE date(ClickTime) = @date
+        WHERE ClickTime >= @from AND ClickTime < @to
         GROUP BY Button";
-        cmd.Parameters.AddWithValue("@date", dateStr);
+        cmd.Parameters.AddWithValue("@from", fromStr);
+        cmd.Parameters.AddWithValue("@to", toStr);
 
         using var reader = cmd.ExecuteReader();
         while (reader.Read())

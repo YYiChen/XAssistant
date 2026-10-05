@@ -15,6 +15,12 @@ public partial class KeyCounterViewModel : ViewModelBase
     private readonly IKeyPressBuffer _buffer;
     private DateTime _currentDate = DateTime.Today;
 
+    /// <summary>跨天检测定时器（每 30 秒查一次日期是否变化）。</summary>
+    private readonly System.Windows.Threading.DispatcherTimer _dayRolloverTimer;
+
+    /// <summary>节流派发定时器（复用单实例，见 ScheduleUiFlush）。</summary>
+    private readonly System.Windows.Threading.DispatcherTimer _uiTimer;
+
     // UI 更新节流：合并为最多每 50ms 一次，避免高频按键把 Dispatcher 队列打满。
     private static readonly TimeSpan UiThrottleInterval = TimeSpan.FromMilliseconds(50);
     private readonly object _uiGate = new();
@@ -64,14 +70,57 @@ public partial class KeyCounterViewModel : ViewModelBase
         _configService = configService;
         _buffer = buffer;
 
+        // 先建好节流定时器：StartRecording() 之后随时可能有按键回调进来
+        _uiTimer = new System.Windows.Threading.DispatcherTimer(
+            System.Windows.Threading.DispatcherPriority.Background,
+            WpfApplication.Current.Dispatcher
+        );
+        _uiTimer.Tick += (_, _) =>
+        {
+            _uiTimer.Stop(); // 单次触发
+            FlushUiCounters();
+        };
+
         _hookService.KeyPressed += OnKeyPressed;
 
         LoadAllCounts();
+
+        // 跨天自动刷新。
+        // 本程序常驻后台（开机自启、静默运行），必然跨越自然日。
+        // 而「今日按键」原先只在 OnKeyPressed 的跨天分支刷新 ——
+        // 跨天后若用户只打开界面查看而不按键，会一直显示昨天的数字当作「今日」。
+        _dayRolloverTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(30),
+        };
+        _dayRolloverTimer.Tick += (_, _) => CheckDayRollover();
+        _dayRolloverTimer.Start();
 
         if (_configService.GetKeyRecordingAutoStart())
         {
             StartRecording();
         }
+    }
+
+    /// <summary>
+    /// 检测是否跨天；跨天则重建各时段统计并把待刷计数清零。
+    ///
+    /// 清空 <c>_pendingKeys</c> 是必要的：这些计数对应的记录已入队、会正常落库，
+    /// 但 <see cref="ReloadAllCountsCore"/> 会用数据库值重建「今日」集合。
+    /// 若不清空，残留的旧计数会在下一次 flush 时被 <c>+=</c> 到新的一天，造成
+    /// 「今天的数字里混进昨天的按键」。
+    /// </summary>
+    private void CheckDayRollover()
+    {
+        if (DateTime.Today <= _currentDate)
+            return;
+
+        _currentDate = DateTime.Today;
+        lock (_uiGate)
+        {
+            _pendingKeys.Clear();
+        }
+        LoadAllCounts();
     }
 
     // IsRecording 变化时通知状态属性
@@ -87,13 +136,10 @@ public partial class KeyCounterViewModel : ViewModelBase
         // 绝不在低级钩子回调里做 I/O（原实现会导致输入延迟）。
         _buffer.Enqueue(new Models.KeyPressRecord { Key = key, PressTime = DateTime.Now });
 
-        // 检测是否跨天
-        DateTime today = DateTime.Today;
-        if (today > _currentDate)
+        // 检测是否跨天（与定时器共用同一逻辑）
+        if (DateTime.Today > _currentDate)
         {
-            _currentDate = today;
-            // 重新加载所有时间段数据
-            LoadAllCounts();
+            CheckDayRollover();
             return;
         }
 
@@ -114,25 +160,22 @@ public partial class KeyCounterViewModel : ViewModelBase
         ScheduleUiFlush();
     }
 
+    /// <summary>
+    /// 节流派发用的单次定时器（复用同一个实例）。
+    ///
+    /// 原实现在每次调度时 <c>new DispatcherTimer</c>：高频输入下每 50ms 就新建一个，
+    /// 一天可产生上百万个短命对象，纯属 GC 压力。复用单实例没有副作用 ——
+    /// <c>_uiFlushScheduled</c> 已保证同一时刻至多只有一个待刷新任务。
+    /// </summary>
     private void ScheduleUiFlush()
     {
         var delay = UiThrottleInterval - (DateTime.UtcNow - _lastUiFlush);
         if (delay < TimeSpan.Zero)
             delay = TimeSpan.Zero;
 
-        var timer = new System.Windows.Threading.DispatcherTimer(
-            System.Windows.Threading.DispatcherPriority.Background,
-            WpfApplication.Current.Dispatcher
-        )
-        {
-            Interval = delay,
-        };
-        timer.Tick += (_, _) =>
-        {
-            timer.Stop();
-            FlushUiCounters();
-        };
-        timer.Start();
+        _uiTimer.Stop(); // 重置计时，避免上一次的残留
+        _uiTimer.Interval = delay;
+        _uiTimer.Start();
     }
 
     private void FlushUiCounters()
