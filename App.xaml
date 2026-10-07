@@ -5,20 +5,39 @@
   xmlns:views="clr-namespace:XAssistant.Views"
   xmlns:vm="clr-namespace:XAssistant.ViewModels">
   <Application.Resources>
-    <DataTemplate DataType="{x:Type vm:HomeViewModel}">
-      <views:HomeView />
-    </DataTemplate>
-    <DataTemplate DataType="{x:Type vm:ClickCounterViewModel}">
-      <views:ClickCounterView />
-    </DataTemplate>
-    <DataTemplate DataType="{x:Type vm:KeyCounterViewModel}">
-      <views:KeyCounterView />
-    </DataTemplate>
-    <DataTemplate DataType="{x:Type vm:UsageViewModel}">
-      <views:UsageView />
-    </DataTemplate>
-    <DataTemplate DataType="{x:Type vm:AppUsageViewModel}">
-      <views:AppUsageView />
-    </DataTemplate>
+    <ResourceDictionary>
+      <!--
+        设计系统资源。合并顺序有意义：
+        Controls.xaml 通过 StaticResource 引用前两个文件中定义的令牌，
+        因此 Palette 与 Typography 必须先于 Controls 加载。
+      -->
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Themes/Palette.xaml" />
+        <ResourceDictionary Source="Themes/Typography.xaml" />
+        <ResourceDictionary Source="Themes/Controls.xaml" />
+      </ResourceDictionary.MergedDictionaries>
+
+      <DataTemplate DataType="{x:Type vm:HomeViewModel}">
+        <views:HomeView />
+      </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:ClickCounterViewModel}">
+        <views:ClickCounterView />
+      </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:KeyCounterViewModel}">
+        <views:KeyCounterView />
+      </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:UsageViewModel}">
+        <views:UsageView />
+      </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:AppUsageViewModel}">
+        <views:AppUsageView />
+      </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:DiagnosticsViewModel}">
+        <views:DiagnosticsView />
+      </DataTemplate>
+      <DataTemplate DataType="{x:Type vm:SettingsViewModel}">
+        <views:SettingsView />
+      </DataTemplate>
+    </ResourceDictionary>
   </Application.Resources>
 </Application>

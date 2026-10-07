@@ -1,0 +1,195 @@
+<UserControl
+  x:Class="XAssistant.Views.DiagnosticsView"
+  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:vm="clr-namespace:XAssistant.ViewModels"
+  d:DataContext="{d:DesignInstance Type=vm:DiagnosticsViewModel}"
+  d:DesignHeight="600"
+  d:DesignWidth="900"
+  mc:Ignorable="d">
+
+  <UserControl.Resources>
+    <!--
+      用 WPF 内置转换器，而不是 KeyCounterView 里那个自定义 BoolToVis ——
+      后者定义在该视图的局部 Resources 中，无法跨视图引用。
+    -->
+    <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+  </UserControl.Resources>
+
+  <Grid Margin="24">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+    </Grid.RowDefinitions>
+
+    <!--  ══ 标题 ══  -->
+    <StackPanel Grid.Row="0">
+      <TextBlock Style="{StaticResource Text.Title}" Text="诊断" />
+      <TextBlock
+        Margin="0,4,0,0"
+        Style="{StaticResource Text.Secondary}"
+        Text="运行日志与文件位置。反馈问题时，从这里导出日志即可。" />
+    </StackPanel>
+
+    <!--  ══ 文件位置 ══  -->
+    <Border
+      Grid.Row="1"
+      Margin="0,16,0,0"
+      Style="{StaticResource Card}">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock
+          Grid.Row="0"
+          Grid.Column="0"
+          Margin="0,0,12,6"
+          Style="{StaticResource Text.SectionHeader}"
+          Text="数据目录" />
+        <TextBlock
+          Grid.Row="0"
+          Grid.Column="1"
+          Margin="0,0,0,6"
+          VerticalAlignment="Center"
+          Style="{StaticResource Text.Mono}"
+          Text="{Binding DataFolderPath}"
+          TextTrimming="CharacterEllipsis" />
+
+        <TextBlock
+          Grid.Row="1"
+          Grid.Column="0"
+          Margin="0,0,12,6"
+          Style="{StaticResource Text.SectionHeader}"
+          Text="日志目录" />
+        <TextBlock
+          Grid.Row="1"
+          Grid.Column="1"
+          Margin="0,0,0,6"
+          VerticalAlignment="Center"
+          Style="{StaticResource Text.Mono}"
+          Text="{Binding LogFolderPath}"
+          TextTrimming="CharacterEllipsis" />
+
+        <StackPanel
+          Grid.Row="0"
+          Grid.RowSpan="2"
+          Grid.Column="2"
+          VerticalAlignment="Top"
+          Orientation="Horizontal">
+          <Button
+            Margin="0,0,8,0"
+            Command="{Binding OpenDataFolderCommand}"
+            Content="打开数据目录"
+            Style="{StaticResource Button.Secondary}" />
+          <Button
+            Command="{Binding OpenLogFolderCommand}"
+            Content="打开日志目录"
+            Style="{StaticResource Button.Secondary}" />
+        </StackPanel>
+
+        <!--  应急日志只在启动失败时出现，因此默认折叠  -->
+        <TextBlock
+          Grid.Row="2"
+          Grid.Column="0"
+          Grid.ColumnSpan="3"
+          Margin="0,6,0,0"
+          Style="{StaticResource Text.Caption}"
+          Text="存在启动失败记录：logs\startup-error.log"
+          Visibility="{Binding HasStartupErrors, Converter={StaticResource BoolToVisibility}}" />
+      </Grid>
+    </Border>
+
+    <!--  ══ 工具条 ══  -->
+    <StackPanel
+      Grid.Row="2"
+      Margin="0,16,0,8"
+      Orientation="Horizontal">
+      <TextBlock
+        VerticalAlignment="Center"
+        Style="{StaticResource Text.Body}"
+        Text="筛选级别" />
+      <ComboBox
+        Width="130"
+        Margin="8,0,16,0"
+        VerticalAlignment="Center"
+        ItemsSource="{Binding LogLevelOptions}"
+        SelectedItem="{Binding LogLevelFilter}" />
+      <Button
+        Margin="0,0,8,0"
+        Command="{Binding RefreshLogsCommand}"
+        Content="刷新"
+        Style="{StaticResource Button.Secondary}" />
+      <Button
+        Margin="0,0,8,0"
+        Command="{Binding ExportLogsCommand}"
+        Content="导出日志"
+        Style="{StaticResource Button.Secondary}" />
+      <Button
+        Command="{Binding ClearLogsCommand}"
+        Content="清空"
+        Style="{StaticResource Button.Secondary}" />
+      <TextBlock
+        Margin="16,0,0,0"
+        VerticalAlignment="Center"
+        Style="{StaticResource Text.Caption}"
+        Text="{Binding VisibleCountText}" />
+    </StackPanel>
+
+    <!--  ══ 日志列表 ══  -->
+    <Border
+      Grid.Row="3"
+      BorderBrush="{StaticResource Brush.Border}"
+      BorderThickness="1"
+      CornerRadius="{StaticResource Radius.Medium}">
+      <ListView
+        Background="Transparent"
+        BorderThickness="0"
+        ItemsSource="{Binding FilteredLogs}"
+        VirtualizingPanel.ScrollUnit="Pixel"
+        VirtualizingPanel.VirtualizationMode="Recycling">
+        <ListView.View>
+          <GridView>
+            <!--
+              列宽按现有数据实测调整：
+              来源列原为 150，而实际值如 "XAssistant.Services.ProcessUsageTracker"
+              会被截成 "XAssistant.Services.Proces…"，因此加宽到 210。
+            -->
+            <GridViewColumn
+              Width="170"
+              DisplayMemberBinding="{Binding Timestamp, StringFormat='MM-dd HH:mm:ss.fff'}"
+              Header="时间" />
+            <GridViewColumn
+              Width="75"
+              DisplayMemberBinding="{Binding Level}"
+              Header="级别" />
+            <!--
+              来源列绑定 SourceShort（仅类名）。完整限定名有 40+ 字符，
+              在列表宽度内必然截断，而命名空间前缀对本项目是恒定冗余的。
+              完整名仍保留在导出的日志文件里。
+            -->
+            <GridViewColumn
+              Width="190"
+              DisplayMemberBinding="{Binding SourceShort}"
+              Header="来源" />
+            <GridViewColumn
+              Width="510"
+              DisplayMemberBinding="{Binding Message}"
+              Header="消息" />
+          </GridView>
+        </ListView.View>
+      </ListView>
+    </Border>
+  </Grid>
+</UserControl>

@@ -135,6 +135,14 @@ public class ConfigurationService : IConfigurationService
 
     public bool GetIsLogExpanded() => _appSettings.General.IsLogExpanded;
 
+    public bool GetStartMinimized() => _appSettings.General.StartMinimized;
+
+    public void SetStartMinimized(bool minimized)
+    {
+        _appSettings.General.StartMinimized = minimized;
+        Save();
+    }
+
     public void SetWindowWidth(double width)
     {
         _appSettings.General.WindowWidth = width;

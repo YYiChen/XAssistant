@@ -76,11 +76,22 @@
     <StackPanel Margin="20" VerticalAlignment="Top">
 
       <!--  ========== 总计区域 ==========  -->
-      <TextBlock
-        Margin="0,0,0,8"
-        FontSize="16"
-        FontWeight="SemiBold"
-        Text="总计" />
+      <!--
+        标题后补上合计数：原先只有「总左键 / 总中键 / 总右键」三个分类数字，
+        没有「一共点了多少下」这个最常用的量。键盘页同样的问题已一并修复，
+        两页现在保持一致的「分类 + 合计」信息层级。
+      -->
+      <StackPanel Margin="0,0,0,8" Orientation="Horizontal">
+        <TextBlock
+          FontSize="16"
+          FontWeight="SemiBold"
+          Text="总计" />
+        <TextBlock
+          Margin="10,0,0,0"
+          VerticalAlignment="Bottom"
+          Style="{StaticResource Text.Secondary}"
+          Text="{Binding MouseTotalClicks, StringFormat='{}{0:N0} 次'}" />
+      </StackPanel>
       <StackPanel HorizontalAlignment="Center" Orientation="Horizontal">
         <Border Style="{StaticResource SmallCardStyle}">
           <StackPanel VerticalAlignment="Center">
@@ -103,11 +114,17 @@
       </StackPanel>
 
       <!--  ========== 今天（突出显示） ==========  -->
-      <TextBlock
-        Margin="0,25,0,10"
-        FontSize="20"
-        FontWeight="Bold"
-        Text="今天" />
+      <StackPanel Margin="0,25,0,10" Orientation="Horizontal">
+        <TextBlock
+          FontSize="20"
+          FontWeight="Bold"
+          Text="今天" />
+        <TextBlock
+          Margin="10,0,0,0"
+          VerticalAlignment="Bottom"
+          Style="{StaticResource Text.Secondary}"
+          Text="{Binding MouseTodayClicks, StringFormat='{}{0:N0} 次'}" />
+      </StackPanel>
       <StackPanel HorizontalAlignment="Center" Orientation="Horizontal">
         <Border Style="{StaticResource TodayCardStyle}">
           <StackPanel VerticalAlignment="Center">
@@ -211,31 +228,29 @@
         </Grid>
       </GroupBox>
 
-      <!--  ========== 控制按钮 ==========  -->
+      <!--
+        ========== 记录状态 ==========
+        原先这里是一对「开始记录 / 停止记录」按钮。按 2026-10-07 的决策，
+        记录开关已统一移到「设置」页 —— 本页现在只显示状态。
+        （此前键盘页用 Visibility 切换、本页用 IsEnabled，两处行为并不一致。）
+      -->
       <StackPanel
         Margin="0,20,0,10"
         HorizontalAlignment="Center"
         Orientation="Horizontal">
-        <Button
-          Width="120"
-          Height="35"
-          Margin="5"
-          BorderBrush="#0078D4"
-          Command="{Binding StartRecordingCommand}"
-          Content="▶ 开始记录"
-          FontWeight="SemiBold"
-          Foreground="#0078D4"
-          IsEnabled="{Binding IsRecording, Converter={StaticResource InverseBool}}" />
-        <Button
-          Width="120"
-          Height="35"
-          Margin="5"
-          Background="#0078D4"
-          Command="{Binding StopRecordingCommand}"
-          Content="⏹ 停止记录"
-          FontWeight="SemiBold"
-          Foreground="White"
-          IsEnabled="{Binding IsRecording}" />
+        <Ellipse
+          Style="{StaticResource Status.Dot}"
+          Fill="{Binding MouseRecordingColor}"
+          VerticalAlignment="Center" />
+        <TextBlock
+          VerticalAlignment="Center"
+          Style="{StaticResource Text.Body}"
+          Text="{Binding MouseRecordingStatus}" />
+        <TextBlock
+          Margin="12,0,0,0"
+          VerticalAlignment="Center"
+          Style="{StaticResource Text.Caption}"
+          Text="记录开关已移至「设置」页" />
       </StackPanel>
 
     </StackPanel>

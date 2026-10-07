@@ -39,6 +39,18 @@ public interface IConfigurationService
     double GetWindowHeight();
     void SetWindowHeight(double height);
 
+    // ---------- 启动行为 ----------
+    /// <summary>启动时是否直接最小化到托盘（不弹主窗口）。</summary>
+    bool GetStartMinimized();
+
+    void SetStartMinimized(bool minimized);
+
+    /// <summary>
+    /// 把当前设置写回磁盘。
+    /// 直接改 <see cref="Settings"/> 上的属性后需要调用它才会持久化。
+    /// </summary>
+    void Save();
+
     // ---------- 日志面板状态 ----------
     bool GetIsLogExpanded();
     void SetIsLogExpanded(bool expanded);

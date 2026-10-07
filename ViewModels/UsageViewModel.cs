@@ -109,11 +109,10 @@ public partial class UsageViewModel : ViewModelBase
             //     );
             // }
 
-            var ts = TimeSpan.FromSeconds(eventSeconds);
-            TodayUsageText =
-                ts.TotalDays >= 1
-                    ? $"{(int)ts.TotalDays} 天 {ts.Hours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}"
-                    : $"{(int)ts.TotalHours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}";
+            // 时长文本统一走 FormatUsageText：
+            // 去掉秒位（秒级跳动对"今天用了多久"没有信息量，还让数字频繁变化），
+            // 并避免 30:15:00 这种读不出量级的写法。
+            TodayUsageText = FormatUsageText(eventSeconds);
 
             // 走到这里说明管道连通、服务在跑 —— 在此处检测「恢复」才准确。
             // （不能放在定时器外层：本方法内部已吞掉异常，外层 try 永远捕获不到，
@@ -141,12 +140,22 @@ public partial class UsageViewModel : ViewModelBase
                 );
             }
 
+            // 服务不可用时的回退。
+            //
+            // 原先这里显示 "00:00:00 (数据库)"：既把内部实现细节（"数据库"）
+            // 暴露给用户，又用大字号在 280px 宽的卡片里溢出；
+            // 更要紧的是 —— 0 会被读成「今天没怎么用电脑」，属于误导。
+            //
+            // 时长的权威来源就是 UsageTracker 服务。服务不在时如实说明「未启用」，
+            // 比给一个看似精确、实则无意义的 0 更诚实。
             try
             {
-                var dbSeconds = LoadTodaySecondsFromDb();
-                var ts = TimeSpan.FromSeconds(dbSeconds);
-                TodayUsageText =
-                    $"{(int)ts.TotalHours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2} (数据库)";
+                long dbSeconds = LoadTodaySecondsFromDb();
+
+                // 库里确实有历史数据时才显示数值（例如服务曾运行过、后来停了）
+                TodayUsageText = dbSeconds > 0
+                    ? FormatUsageText(dbSeconds)
+                    : "未启用";
                 return dbSeconds;
             }
             catch (Exception dbEx)
@@ -155,10 +164,21 @@ public partial class UsageViewModel : ViewModelBase
                 {
                     _logger.LogError(dbEx, "数据库读取今日秒数也失败");
                 }
-                TodayUsageText = "未安装电脑时长服务";
+                TodayUsageText = "未启用";
                 return 0;
             }
         }
+    }
+
+    /// <summary>
+    /// 把秒数格式化为时长文本。超过一天时带"天"，避免出现 30:15:00 这种读不出量级的写法。
+    /// </summary>
+    private static string FormatUsageText(long seconds)
+    {
+        var ts = TimeSpan.FromSeconds(seconds);
+        return ts.TotalDays >= 1
+            ? $"{(int)ts.TotalDays} 天 {ts.Hours:D2}:{ts.Minutes:D2}"
+            : $"{(int)ts.TotalHours:D2}:{ts.Minutes:D2}";
     }
 
     private async Task LoadHistoryAsync()

@@ -1,0 +1,92 @@
+<!--
+    字体层级
+
+    字体族用「Segoe UI → Microsoft YaHei UI」回退链：英文与数字走 Segoe UI
+    （字形更规整），中文自动落到 YaHei UI。这样中英混排的字重不会跳。
+
+    用法：<TextBlock Style="{StaticResource Text.SectionHeader}" />
+-->
+<ResourceDictionary
+  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:sys="clr-namespace:System;assembly=System.Runtime">
+
+  <!--  ==================== 字体族 ====================  -->
+  <FontFamily x:Key="Font.Family">Segoe UI, Microsoft YaHei UI, Microsoft YaHei, sans-serif</FontFamily>
+  <FontFamily x:Key="Font.Family.Mono">Cascadia Mono, Consolas, Courier New, monospace</FontFamily>
+
+  <!--  ==================== 字号阶梯 ====================  -->
+  <sys:Double x:Key="Font.Size.Metric.Large">28</sys:Double>
+  <sys:Double x:Key="Font.Size.Metric">20</sys:Double>
+  <sys:Double x:Key="Font.Size.Title">20</sys:Double>
+  <sys:Double x:Key="Font.Size.Subtitle">16</sys:Double>
+  <sys:Double x:Key="Font.Size.SectionHeader">14</sys:Double>
+  <sys:Double x:Key="Font.Size.Body">13</sys:Double>
+  <sys:Double x:Key="Font.Size.Caption">11</sys:Double>
+
+  <!--  ==================== 语义化文本样式 ====================  -->
+
+  <!--  页面标题：每个页面顶部一个  -->
+  <Style x:Key="Text.Title" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource Font.Family}" />
+    <Setter Property="FontSize" Value="{StaticResource Font.Size.Title}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+
+  <!--  区块标题：卡片或分组的标题  -->
+  <Style x:Key="Text.SectionHeader" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource Font.Family}" />
+    <Setter Property="FontSize" Value="{StaticResource Font.Size.SectionHeader}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
+  </Style>
+
+  <!--  正文  -->
+  <Style x:Key="Text.Body" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource Font.Family}" />
+    <Setter Property="FontSize" Value="{StaticResource Font.Size.Body}" />
+    <Setter Property="FontWeight" Value="Normal" />
+    <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+
+  <!--  次要文字：说明、补充信息  -->
+  <Style x:Key="Text.Secondary" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource Font.Family}" />
+    <Setter Property="FontSize" Value="{StaticResource Font.Size.Body}" />
+    <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+
+  <!--  辅助/注释文字  -->
+  <Style x:Key="Text.Caption" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource Font.Family}" />
+    <Setter Property="FontSize" Value="{StaticResource Font.Size.Caption}" />
+    <Setter Property="Foreground" Value="{StaticResource Brush.Text.Tertiary}" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+
+  <!--  指标数字：首页仪表盘的大数字  -->
+  <Style x:Key="Text.MetricLarge" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource Font.Family}" />
+    <Setter Property="FontSize" Value="{StaticResource Font.Size.Metric.Large}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
+  </Style>
+
+  <Style x:Key="Text.Metric" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource Font.Family}" />
+    <Setter Property="FontSize" Value="{StaticResource Font.Size.Metric}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{StaticResource Brush.Text.Primary}" />
+  </Style>
+
+  <!--  等宽：日志、路径、版本号等  -->
+  <Style x:Key="Text.Mono" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource Font.Family.Mono}" />
+    <Setter Property="FontSize" Value="{StaticResource Font.Size.Caption}" />
+    <Setter Property="Foreground" Value="{StaticResource Brush.Text.Secondary}" />
+  </Style>
+</ResourceDictionary>

@@ -42,6 +42,20 @@ echo "      参照 $LOCAL_REF，共 $(echo "$FILES" | grep -c . ) 个文件"
 ENTRIES="[]"
 while IFS= read -r f; do
   [ -z "$f" ] && continue
+
+  # 已删除的文件：本地不存在，无法生成 blob。
+  # 在 git-data API 中，tree 条目把 sha 设为 null 即表示删除该路径。
+  if [ ! -f "$f" ]; then
+    ENTRIES=$("$PY" -c "
+import json,sys
+e=json.loads(sys.argv[1])
+e.append({'path':sys.argv[2],'mode':'100644','type':'blob','sha':None})
+print(json.dumps(e))
+" "$ENTRIES" "$f")
+    echo "      $f -> (已删除)"
+    continue
+  fi
+
   "$PY" -c "
 import base64,json,sys
 data=open(sys.argv[1],'rb').read()

@@ -1,0 +1,276 @@
+<UserControl
+  x:Class="XAssistant.Views.SettingsView"
+  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:vm="clr-namespace:XAssistant.ViewModels"
+  d:DataContext="{d:DesignInstance Type=vm:SettingsViewModel}"
+  d:DesignHeight="700"
+  d:DesignWidth="900"
+  mc:Ignorable="d">
+
+  <ScrollViewer
+    HorizontalScrollBarVisibility="Disabled"
+    VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="24">
+
+      <TextBlock Style="{StaticResource Text.Title}" Text="设置" />
+      <TextBlock
+        Margin="0,4,0,0"
+        Style="{StaticResource Text.Secondary}"
+        Text="所有设置立即生效并自动保存。" />
+
+      <!--  ══════════ 记录 ══════════  -->
+      <Border Margin="0,20,0,0" Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Style="{StaticResource Text.SectionHeader}" Text="记录" />
+
+          <Grid Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+              <TextBlock Style="{StaticResource Text.Body}" Text="键盘记录" />
+              <TextBlock Style="{StaticResource Text.Caption}" Text="统计按键次数与顺序，不记录输入内容" />
+            </StackPanel>
+            <StackPanel
+              Grid.Column="1"
+              VerticalAlignment="Center"
+              Orientation="Horizontal">
+              <TextBlock
+                Margin="0,0,10,0"
+                VerticalAlignment="Center"
+                Style="{StaticResource Text.Caption}"
+                Text="{Binding KeyRecordingStatusText}" />
+              <CheckBox IsChecked="{Binding KeyRecording}" />
+            </StackPanel>
+          </Grid>
+
+          <Border Margin="0,12,0,0" Style="{StaticResource Divider}" />
+
+          <Grid Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+              <TextBlock Style="{StaticResource Text.Body}" Text="鼠标点击记录" />
+              <TextBlock Style="{StaticResource Text.Caption}" Text="统计左键 / 中键 / 右键点击次数" />
+            </StackPanel>
+            <StackPanel
+              Grid.Column="1"
+              VerticalAlignment="Center"
+              Orientation="Horizontal">
+              <TextBlock
+                Margin="0,0,10,0"
+                VerticalAlignment="Center"
+                Style="{StaticResource Text.Caption}"
+                Text="{Binding MouseRecordingStatusText}" />
+              <CheckBox IsChecked="{Binding MouseRecording}" />
+            </StackPanel>
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <!--  ══════════ 启动 ══════════  -->
+      <Border Margin="0,16,0,0" Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Style="{StaticResource Text.SectionHeader}" Text="启动" />
+
+          <Grid Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+              <TextBlock Style="{StaticResource Text.Body}" Text="开机自动启动" />
+              <TextBlock Style="{StaticResource Text.Caption}" Text="登录 Windows 后自动在后台运行" />
+            </StackPanel>
+            <CheckBox
+              Grid.Column="1"
+              VerticalAlignment="Center"
+              IsChecked="{Binding StartWithWindows}" />
+          </Grid>
+
+          <Border Margin="0,12,0,0" Style="{StaticResource Divider}" />
+
+          <Grid Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+              <TextBlock Style="{StaticResource Text.Body}" Text="启动时最小化到托盘" />
+              <TextBlock Style="{StaticResource Text.Caption}" Text="不弹出主窗口；单击托盘图标可随时打开" />
+            </StackPanel>
+            <CheckBox
+              Grid.Column="1"
+              VerticalAlignment="Center"
+              IsChecked="{Binding StartMinimized}" />
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <!--  ══════════ 速记 ══════════  -->
+      <Border Margin="0,16,0,0" Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Style="{StaticResource Text.SectionHeader}" Text="灵感速记" />
+
+          <Grid Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock
+              Grid.Column="0"
+              Width="110"
+              Style="{StaticResource Text.Body}"
+              Text="唤起热键" />
+            <TextBlock
+              Grid.Column="1"
+              Style="{StaticResource Text.Body}"
+              Text="{Binding QuickNoteHotKey}" />
+          </Grid>
+
+          <Grid Margin="0,10,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock
+              Grid.Column="0"
+              Width="110"
+              Style="{StaticResource Text.Body}"
+              Text="数据库连接" />
+            <TextBlock
+              Grid.Column="1"
+              Style="{StaticResource Text.Secondary}"
+              Text="{Binding QuickNoteConnectionStatus}"
+              TextWrapping="Wrap" />
+          </Grid>
+
+          <TextBlock
+            Margin="0,10,0,0"
+            Style="{StaticResource Text.Caption}"
+            Text="热键与连接串目前在 appsettings.json 中配置。改为界面编辑需要额外的输入校验与凭据保护，留待后续版本。" />
+        </StackPanel>
+      </Border>
+
+      <!--  ══════════ 数据 ══════════  -->
+      <Border Margin="0,16,0,0" Style="{StaticResource Card}">
+        <StackPanel>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock
+              Grid.Column="0"
+              Style="{StaticResource Text.SectionHeader}"
+              Text="数据" />
+            <TextBlock
+              Grid.Column="1"
+              VerticalAlignment="Center"
+              Style="{StaticResource Text.Caption}"
+              Text="{Binding TotalSizeText}" />
+          </Grid>
+
+          <TextBlock
+            Margin="0,10,0,0"
+            Style="{StaticResource Text.Mono}"
+            Text="{Binding DataFolderPath}"
+            TextTrimming="CharacterEllipsis" />
+
+          <ItemsControl Margin="0,10,0,0" ItemsSource="{Binding Databases}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Grid Margin="0,4">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="110" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <TextBlock
+                    Grid.Column="0"
+                    Style="{StaticResource Text.Body}"
+                    Text="{Binding Name}" />
+                  <TextBlock
+                    Grid.Column="1"
+                    Style="{StaticResource Text.Mono}"
+                    Text="{Binding FileName}" />
+                  <TextBlock
+                    Grid.Column="2"
+                    Style="{StaticResource Text.Secondary}"
+                    Text="{Binding SizeText}" />
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <StackPanel Margin="0,12,0,0" Orientation="Horizontal">
+            <Button
+              Margin="0,0,8,0"
+              Command="{Binding OpenDataFolderCommand}"
+              Content="打开数据目录"
+              Style="{StaticResource Button.Secondary}" />
+            <Button
+              Command="{Binding RefreshDataInfoCommand}"
+              Content="刷新"
+              Style="{StaticResource Button.Secondary}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <!--  ══════════ 关于 ══════════  -->
+      <Border Margin="0,16,0,24" Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Style="{StaticResource Text.SectionHeader}" Text="关于" />
+
+          <Grid Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="110" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock
+              Grid.Column="0"
+              Style="{StaticResource Text.Body}"
+              Text="版本" />
+            <TextBlock
+              Grid.Column="1"
+              Style="{StaticResource Text.Body}"
+              Text="{Binding VersionText, StringFormat='v{0}'}" />
+          </Grid>
+
+          <Grid Margin="0,10,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="110" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock
+              Grid.Column="0"
+              Style="{StaticResource Text.Body}"
+              Text="构建日期" />
+            <TextBlock
+              Grid.Column="1"
+              Style="{StaticResource Text.Body}"
+              Text="{Binding BuildDateText}" />
+          </Grid>
+
+          <TextBlock
+            Margin="0,10,0,0"
+            Style="{StaticResource Text.Caption}"
+            Text="数据仅保存在本机，不会上传。窗口标题不写入数据库。" />
+
+          <Button
+            Margin="0,12,0,0"
+            HorizontalAlignment="Left"
+            Command="{Binding OpenRepositoryCommand}"
+            Content="打开项目仓库"
+            Style="{StaticResource Button.Secondary}" />
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

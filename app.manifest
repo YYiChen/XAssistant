@@ -1,18 +1,46 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
-  <!-- This manifest is used on Windows only.
-       Don't remove it as it might cause problems with window transparency and embedded controls.
-       For more details visit https://learn.microsoft.com/en-us/windows/win32/sbscs/application-manifests -->
-  <assemblyIdentity version="1.0.0.0" name="XAssistant.Desktop"/>
+  <!--
+    Windows 应用清单。
+
+    原模板只声明了兼容的 Windows 版本，缺两项与本程序直接相关的设置：
+      · requestedExecutionLevel —— 权限语义（原先未声明，走默认）
+      · dpiAwareness —— 高 DPI 感知（原先未声明，多屏不同缩放时会模糊）
+    本次补齐，详见各项注释。
+  -->
+  <assemblyIdentity version="1.0.0.0" name="XAssistant.Desktop" />
+
+  <!--
+    权限声明：asInvoker —— 以启动者权限运行，不触发 UAC 提权。
+
+    这与程序设计一致：WMI 的进程事件订阅需要管理员权限，探测失败后
+    自动降级为每 5 秒轮询（见 Services/ProcessUsageTracker.cs）。
+    即「不需要提权也能完整工作」，因此不应要求 UAC。
+  -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
 
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     <application>
-      <!-- A list of the Windows versions that this application has been tested on
-           and is designed to work with. Uncomment the appropriate elements
-           and Windows will automatically select the most compatible environment. -->
-
-      <!-- Windows 10 -->
+      <!-- Windows 10 / 11 -->
       <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
     </application>
   </compatibility>
+
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <!--
+        PerMonitorV2：在多显示器、各屏缩放比例不同的情况下，
+        窗口跨屏移动时按目标屏的 DPI 重绘，文字保持清晰。
+        旧系统不认识该键，故同时保留 dpiAware 作为回退。
+      -->
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>
+    </windowsSettings>
+  </application>
 </assembly>

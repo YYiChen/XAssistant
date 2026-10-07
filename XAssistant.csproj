@@ -7,6 +7,33 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
+
+    <!--
+      产品信息。原先完全没有版本号，「设置 → 关于」无处显示，
+      出问题时也无法确认用户跑的是哪一版。
+    -->
+    <Version>1.1.0</Version>
+    <Product>XAssistant</Product>
+    <Company>YYiChen</Company>
+    <Description>本机输入与使用情况记录工具（个人自用）</Description>
+
+    <!--
+      DPI 感知与应用清单（计划 A7）。
+      PerMonitorV2（多显示器不同缩放比例下文字不模糊）与 asInvoker
+      （明确以普通用户权限运行）都在 app.manifest 里声明 ——
+      WPF 的 DPI 感知由清单控制，不是通过 MSBuild 属性。
+    -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!--
+      抑制 WFO0003。该警告建议把高 DPI 设置从 manifest 移到
+      ApplicationHighDpiMode 属性 —— 但那是 WinForms 的做法，只对
+      System.Windows.Forms.Application 生效。本项目主要用 WPF
+      （启用 UseWindowsForms 仅为了托盘 NotifyIcon），
+      WPF 的 DPI 感知必须由 manifest 的 dpiAwareness 声明，
+      按该建议改反而会丢失 PerMonitorV2。
+    -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
